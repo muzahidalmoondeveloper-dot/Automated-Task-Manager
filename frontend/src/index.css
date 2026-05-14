@@ -1,0 +1,70 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background: #f8fafc;
+}
+
+
+html.night body {
+  background-color: #020617;
+  color: #e2e8f0;
+}
+
+html.night .bg-slate-100 {
+  background-color: #020617;
+}
+
+html.night .bg-white {
+  background-color: #0f172a;
+}
+
+html.night .text-slate-950,
+html.night .text-slate-900 {
+  color: #f8fafc;
+}
+
+html.night .text-slate-800,
+html.night .text-slate-700,
+html.night .text-slate-600 {
+  color: #cbd5e1;
+}
+
+html.night .text-slate-500 {
+  color: #94a3b8;
+}
+
+html.night .text-slate-400 {
+  color: #64748b;
+}
+
+html.night .border-slate-100,
+html.night .border-slate-200,
+html.night .border-slate-300 {
+  border-color: #1e293b;
+}
+
+html.night .bg-slate-50 {
+  background-color: #111827;
+}
+
+html.night .bg-slate-100 {
+  background-color: #1e293b;
+}
+
+html.night input,
+html.night select,
+html.night textarea {
+  background-color: #0f172a;
+  color: #f8fafc;
+  border-color: #334155;
+}
+
+html.night input::placeholder,
+html.night textarea::placeholder {
+  color: #64748b;
+}
