@@ -13,9 +13,9 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
 
-    BACKEND_BASE_URL: str = "http://localhost:8000"
-    FRONTEND_BASE_URL: str = "http://localhost:5173"
-    CORS_ORIGINS: str = "http://localhost:5173"
+    BACKEND_BASE_URL: str = "https://automated-task-manager.onrender.com"
+    FRONTEND_BASE_URL: str = "https://automated-task-manager.onrender.com"
+    CORS_ORIGINS: str = "https://automated-task-manager.onrender.com"
 
 
     GOOGLE_CLIENT_ID: str | None = None
