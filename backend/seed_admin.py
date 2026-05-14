@@ -1,15 +1,16 @@
 import asyncio
 from datetime import datetime, timezone
-
+import os
+from dotenv import load_dotenv
 from app.core.database import AsyncSessionLocal
 from app.core.roles import ADMIN
 from app.repositories.user_repository import UserRepository
 from app.schemas.user import UserCreate
+load_dotenv()
 
-
-ADMIN_NAME = "Default Admin"
-ADMIN_EMAIL = "admin@example.com"
-ADMIN_PASSWORD = "admin12345"
+ADMIN_NAME = os.getenv("ADMIN_NAME")
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
 
 
 async def seed_admin():
