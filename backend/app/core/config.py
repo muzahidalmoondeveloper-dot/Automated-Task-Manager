@@ -47,6 +47,11 @@ class Settings(BaseSettings):
 
     FRONTEND_URL: str = "http://localhost:5173"
 
+    # Default admin seeded at startup
+    ADMIN_NAME: str = "Admin"
+    ADMIN_EMAIL: str | None = None
+    ADMIN_PASSWORD: str | None = None
+
 
     # ── LLM provider selection ───────────────────────────────────────────────
     # Set LLM_PROVIDER to one of: ollama | openai | gemini | generic

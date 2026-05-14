@@ -14,6 +14,7 @@ import app.models.chat  # noqa: F401  — register models for auto table creatio
 from contextlib import asynccontextmanager
 import logging
 from app.services.automation_scheduler import start_scheduler, stop_scheduler
+from seed_admin import seed_admin
 
 settings = get_settings()
 
@@ -28,6 +29,8 @@ async def lifespan(app: FastAPI):
         await conn.execute(text(
             "ALTER TABLE meeting_transcripts ADD COLUMN IF NOT EXISTS tasks_extracted BOOLEAN NOT NULL DEFAULT FALSE"
         ))
+
+    await seed_admin()
 
     start_scheduler()
 
