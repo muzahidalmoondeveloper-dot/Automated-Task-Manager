@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import date, datetime, timezone
+from datetime import date, timedelta
 from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,7 +32,74 @@ INTENT_LIST_TASKS = "list_tasks"
 INTENT_UPDATE_TASK = "update_task"
 INTENT_DELETE_TASK = "delete_task"
 INTENT_ANALYZE_TEXT = "analyze_text"
+INTENT_DB_QUERY = "db_query"
 INTENT_GENERAL = "general"
+
+# ─── Status normalization ─────────────────────────────────────────────────────
+
+_STATUS_SYNONYMS: dict[str, str] = {
+    "done": "done",
+    "completed": "done",
+    "finished": "done",
+    "complete": "done",
+    "closed": "done",
+    "todo": "todo",
+    "to do": "todo",
+    "pending": "todo",
+    "not started": "todo",
+    "not_started": "todo",
+    "new": "todo",
+    "open": "todo",
+    "in progress": "in_progress",
+    "in_progress": "in_progress",
+    "inprogress": "in_progress",
+    "ongoing": "in_progress",
+    "working": "in_progress",
+    "started": "in_progress",
+    "wip": "in_progress",
+    "pending review": "pending_review",
+    "pending_review": "pending_review",
+    "review": "pending_review",
+    "in review": "pending_review",
+    "in_review": "pending_review",
+    "reviewing": "pending_review",
+    "under review": "pending_review",
+    "needs review": "pending_review",
+}
+
+_PROJECT_STATUS_SYNONYMS: dict[str, str] = {
+    "active": "active",
+    "running": "active",
+    "ongoing": "active",
+    "in progress": "active",
+    "paused": "paused",
+    "on hold": "paused",
+    "hold": "paused",
+    "suspended": "paused",
+    "completed": "completed",
+    "done": "completed",
+    "finished": "completed",
+    "closed": "completed",
+    "cancelled": "cancelled",
+    "canceled": "cancelled",
+    "stopped": "cancelled",
+    "abandoned": "cancelled",
+}
+
+
+def _normalize_status(status: str | None) -> str | None:
+    if not status:
+        return None
+    return _STATUS_SYNONYMS.get(status.lower().strip())
+
+
+def _normalize_project_status(status: str | None) -> str | None:
+    if not status:
+        return None
+    return _PROJECT_STATUS_SYNONYMS.get(status.lower().strip())
+
+
+# ─── Prompts ──────────────────────────────────────────────────────────────────
 
 _INTENT_SYSTEM = """You are an intent classifier for a task management assistant.
 Classify the user's message into exactly ONE of these intents:
@@ -41,17 +108,17 @@ Classify the user's message into exactly ONE of these intents:
 - update_task: user wants to change or update tasks — including bulk operations like "mark all tasks as done", "set everything to in_progress"
 - delete_task: user wants to delete or remove tasks — including bulk operations like "delete all tasks", "remove all tasks", "delete all of task", "please delete all of task"
 - analyze_text: user pasted an email, meeting transcript, or document and wants tasks extracted OR wants a summary/analysis of previously shared content
-- general: any other question, greeting, or request
+- db_query: user is asking an analytical or lookup question about data in the system — e.g. "how many users are there", "list all projects", "what tasks are overdue", "who is in team Alpha", "what is the progress of project X", "how many tasks are done", "show active projects", "what tasks does John have", "system statistics", "workload summary", "who are the admins", "how many teams", "tasks due this week"
+- general: any other question, greeting, or request not covered above
 
 IMPORTANT rules:
 - "delete all", "delete all tasks", "delete all of task", "remove all" → delete_task
 - "mark all as done", "set all to complete", "update all tasks" → update_task
+- Always prefer db_query over general when the user asks about counts, lists, statistics, user names, roles, team members, project progress, or overdue/due-soon queries about system data.
 - Always prefer a specific action intent (create/list/update/delete) over "general" when an action word is present.
 - Use conversation history to resolve references like "those", "them", "the above", "from the summary", "from the file".
 
 Respond with ONLY a JSON object: {"intent": "<intent>"}"""
-
-# ─── Extraction prompts ───────────────────────────────────────────────────────
 
 _CREATE_TASK_SYSTEM = """You are a task-creation assistant. Extract structured task data from the user's request.
 
@@ -112,6 +179,55 @@ Return ONLY a JSON object:
   "summary": "string (1-2 sentence summary of what the text was about)"
 }}
 Today's date: {today}"""
+
+_DB_QUERY_EXTRACT_SYSTEM = """You are a database query parameter extractor for a task management system.
+Extract structured parameters from the user's question.
+
+Return ONLY a JSON object:
+{
+  "sub_intent": "one of the values below",
+  "user_name": "string or null — the name of a specific user mentioned",
+  "project_name": "string or null — the name of a specific project mentioned",
+  "team_name": "string or null — the name of a specific team mentioned",
+  "status": "string or null — the status keyword mentioned, normalized to: todo|in_progress|pending_review|done|active|paused|completed|cancelled",
+  "role": "admin|team_manager|team_member or null",
+  "days_ahead": "integer or null — for due-soon queries, how many days ahead (default 7)"
+}
+
+Sub-intent values and when to use them:
+- user_count: "how many users", "total users", "number of users"
+- user_list: "list all users", "show all users", "who are the users", "all users"
+- user_by_role: "who are the admins", "show managers", "list team members", "who has role X"
+- user_tasks: "tasks assigned to [name]", "what tasks does [name] have", "[name]'s tasks", "tasks for [name]"
+- task_by_status: "how many tasks are done", "show all completed tasks", "list in_progress tasks", "tasks with status X"
+- task_overdue: "overdue tasks", "what tasks are overdue", "past due tasks", "tasks that are late"
+- task_by_project: "tasks in project X", "tasks for project Alpha", "what is project X working on"
+- task_by_team: "tasks for team Y", "team Beta tasks", "what is team Y working on"
+- task_due_soon: "tasks due soon", "tasks due this week", "upcoming tasks", "tasks due in X days"
+- project_count: "how many projects", "total projects", "number of projects"
+- project_list: "list all projects", "show projects", "what projects are there"
+- project_by_status: "how many active projects", "completed projects", "projects with status X"
+- project_progress: "progress of project X", "how is project Alpha going", "project X status", "how far along is project X"
+- team_count: "how many teams", "total teams", "number of teams"
+- team_list: "list all teams", "show teams", "what teams are there"
+- team_members: "who is in team X", "members of team Beta", "team X members", "who belongs to team X"
+- team_workload: "workload of team X", "team Alpha tasks", "how busy is team X", "team X task count"
+- workload_summary: "overall summary", "workload overview", "system stats", "system overview", "dashboard stats", "give me a summary"
+
+Status normalization:
+- done/completed/finished/complete/closed → "done"
+- todo/pending/not started/new/open → "todo"
+- in progress/ongoing/working/started/wip → "in_progress"
+- pending review/review/in review/reviewing/under review → "pending_review"
+- active/running/ongoing → "active" (for projects)
+- paused/on hold/suspended → "paused" (for projects)
+- cancelled/canceled/abandoned → "cancelled" (for projects)
+
+Role normalization:
+- admin/administrator → "admin"
+- manager/team manager → "team_manager"
+- member/team member/employee → "team_member"
+"""
 
 
 def _today() -> str:
@@ -289,6 +405,8 @@ class ChatService:
             return await self._handle_delete_task(user, message, history)
         if intent == INTENT_ANALYZE_TEXT:
             return await self._handle_analyze_text(user, message, history)
+        if intent == INTENT_DB_QUERY:
+            return await self._handle_db_query(user, message, history)
         return await self._handle_general(user, message, history)
 
     # ─── Create task ──────────────────────────────────────────────────────────
@@ -637,6 +755,401 @@ class ChatService:
         )
         return reply, actions
 
+    # ─── DB Query ─────────────────────────────────────────────────────────────
+
+    async def _handle_db_query(
+        self, user: User, message: str, history: str = ""
+    ) -> tuple[str, list[ChatAction]]:
+        from app.core.roles import ADMIN, TEAM_MANAGER
+
+        # Security: refuse any request that attempts data modification
+        _destructive = {"insert", "drop", "truncate", "alter"}
+        msg_words = set(message.lower().split())
+        if msg_words & _destructive:
+            return (
+                "I can only read data from the database. "
+                "I cannot modify, delete, or alter any records. "
+                "To make changes, please use the application interface.",
+                [],
+            )
+
+        # Extract sub-intent and entities via LLM
+        user_prompt = (
+            f"Conversation history:\n{history}\n\nUser question: {message}"
+            if history else message
+        )
+        try:
+            result = await self._llm.generate_text(
+                system_prompt=_DB_QUERY_EXTRACT_SYSTEM,
+                user_prompt=user_prompt,
+                temperature=0.0,
+                response_format="json",
+            )
+            params = _parse_json_safe(result.text)
+        except Exception as exc:
+            logger.warning("DB query extraction failed: %s — falling back to general", exc)
+            return await self._handle_general(user, message, history)
+
+        sub_intent: str = params.get("sub_intent") or ""
+        user_name: str | None = params.get("user_name")
+        project_name: str | None = params.get("project_name")
+        team_name: str | None = params.get("team_name")
+        raw_status: str | None = params.get("status")
+        role: str | None = params.get("role")
+        days_ahead: int = int(params.get("days_ahead") or 7)
+
+        status = _normalize_status(raw_status)
+        project_status = _normalize_project_status(raw_status)
+
+        logger.info(
+            "DB query routed: sub_intent=%s user=%r project=%r team=%r status=%r role=%r",
+            sub_intent, user_name, project_name, team_name, status, role,
+        )
+
+        can_see_all = user.role in {ADMIN, TEAM_MANAGER}
+
+        # ── user_count ────────────────────────────────────────────────────────
+        if sub_intent == "user_count":
+            if not can_see_all:
+                return "You don't have permission to view user statistics.", []
+            users = await self._user_repo.list_all()
+            active = sum(1 for u in users if u.is_active)
+            return (
+                f"There are **{len(users)} user(s)** in the system "
+                f"({active} active, {len(users) - active} inactive)."
+            ), []
+
+        # ── user_list ─────────────────────────────────────────────────────────
+        if sub_intent == "user_list":
+            if not can_see_all:
+                return "You don't have permission to list all users.", []
+            users = await self._user_repo.list_all()
+            if not users:
+                return "There are no users in the system.", []
+            lines = [
+                f"• **{u.full_name}** ({u.email}) — {u.role.replace('_', ' ')} "
+                f"— {'active' if u.is_active else 'inactive'}"
+                for u in users[:50]
+            ]
+            return f"**Users ({len(users)} total):**\n" + "\n".join(lines), []
+
+        # ── user_by_role ──────────────────────────────────────────────────────
+        if sub_intent == "user_by_role":
+            if not can_see_all:
+                return "You don't have permission to view user roles.", []
+            if not role:
+                return "Which role are you asking about? (admin, team_manager, or team_member)", []
+            users = await self._user_repo.list_by_roles([role])
+            if not users:
+                return f"There are no users with role **{role.replace('_', ' ')}**.", []
+            names = ", ".join(u.full_name for u in users[:30])
+            label = role.replace("_", " ").title() + "s"
+            return f"**{label} ({len(users)}):** {names}", []
+
+        # ── user_tasks ────────────────────────────────────────────────────────
+        if sub_intent == "user_tasks":
+            if user_name:
+                target = await self._resolve_user_by_name(user_name)
+                if not target:
+                    return f"I couldn't find a user named **{user_name}**. Please check the name.", []
+                if not can_see_all and target.id != user.id:
+                    return "You can only view your own tasks.", []
+                target_id = target.id
+                target_label = target.full_name
+            elif can_see_all:
+                return "Which user are you asking about?", []
+            else:
+                target_id = user.id
+                target_label = user.full_name
+
+            tasks = await self._task_repo.list_for_assignee(target_id)
+            if not tasks:
+                return f"**{target_label}** has no assigned tasks.", []
+
+            counts = {s: sum(1 for t in tasks if t.status == s) for s in ["todo", "in_progress", "pending_review", "done"]}
+            lines = [
+                f"• [{t.id}] {t.name} — {t.status} — due {t.due_date or 'no date'}"
+                for t in tasks[:25]
+            ]
+            summary = (
+                f"**{target_label}** has **{len(tasks)} task(s)**: "
+                f"todo={counts['todo']}, in_progress={counts['in_progress']}, "
+                f"pending_review={counts['pending_review']}, done={counts['done']}"
+            )
+            return f"{summary}\n\n" + "\n".join(lines), []
+
+        # ── task_by_status ────────────────────────────────────────────────────
+        if sub_intent == "task_by_status":
+            tasks = (
+                await self._task_repo.list_all()
+                if can_see_all
+                else await self._task_repo.list_for_assignee(user.id)
+            )
+            if status:
+                filtered = [t for t in tasks if t.status == status]
+                if not filtered:
+                    return f"There are no tasks with status **{status}**.", []
+                lines = [
+                    f"• [{t.id}] {t.name} "
+                    f"— {t.assignee.full_name if t.assignee else 'unassigned'} "
+                    f"— due {t.due_date or 'no date'}"
+                    for t in filtered[:30]
+                ]
+                return f"**Tasks with status '{status}' ({len(filtered)}):**\n" + "\n".join(lines), []
+            # No specific status — show breakdown
+            counts = {s: sum(1 for t in tasks if t.status == s) for s in ["todo", "in_progress", "pending_review", "done"]}
+            return (
+                f"**Task status breakdown ({len(tasks)} total):**\n"
+                f"• To Do: {counts['todo']}\n"
+                f"• In Progress: {counts['in_progress']}\n"
+                f"• Pending Review: {counts['pending_review']}\n"
+                f"• Done: {counts['done']}"
+            ), []
+
+        # ── task_overdue ──────────────────────────────────────────────────────
+        if sub_intent == "task_overdue":
+            today = date.today()
+            tasks = (
+                await self._task_repo.list_all()
+                if can_see_all
+                else await self._task_repo.list_for_assignee(user.id)
+            )
+            overdue = [
+                t for t in tasks
+                if t.due_date and t.due_date < today and t.status != "done"
+            ]
+            if not overdue:
+                return "There are no overdue tasks.", []
+            lines = [
+                f"• [{t.id}] {t.name} — due {t.due_date} — {t.status} "
+                f"— {t.assignee.full_name if t.assignee else 'unassigned'}"
+                for t in overdue[:30]
+            ]
+            return f"**Overdue tasks ({len(overdue)}):**\n" + "\n".join(lines), []
+
+        # ── task_by_project ───────────────────────────────────────────────────
+        if sub_intent == "task_by_project":
+            if not project_name:
+                return "Which project are you asking about?", []
+            project = await self._resolve_project(project_name)
+            if not project:
+                return f"I couldn't find a project named **{project_name}**. Check the Projects page.", []
+            tasks = await self._task_repo.list_by_project(project.id)
+            if not tasks:
+                return f"Project **{project.name}** has no tasks.", []
+            counts = {s: sum(1 for t in tasks if t.status == s) for s in ["todo", "in_progress", "pending_review", "done"]}
+            lines = [
+                f"• [{t.id}] {t.name} — {t.status} "
+                f"— {t.assignee.full_name if t.assignee else 'unassigned'}"
+                for t in tasks[:30]
+            ]
+            summary = (
+                f"**Project '{project.name}' — {len(tasks)} task(s):** "
+                f"todo={counts['todo']}, in_progress={counts['in_progress']}, "
+                f"pending_review={counts['pending_review']}, done={counts['done']}"
+            )
+            return f"{summary}\n\n" + "\n".join(lines), []
+
+        # ── task_by_team ──────────────────────────────────────────────────────
+        if sub_intent == "task_by_team":
+            if not team_name:
+                return "Which team are you asking about?", []
+            team = await self._resolve_team(team_name)
+            if not team:
+                return f"I couldn't find a team named **{team_name}**. Check the Teams page.", []
+            tasks = await self._task_repo.list_by_team(team.id)
+            if not tasks:
+                return f"Team **{team.name}** has no tasks.", []
+            lines = [
+                f"• [{t.id}] {t.name} — {t.status} "
+                f"— {t.assignee.full_name if t.assignee else 'unassigned'}"
+                for t in tasks[:30]
+            ]
+            return f"**Team '{team.name}' tasks ({len(tasks)}):**\n" + "\n".join(lines), []
+
+        # ── task_due_soon ─────────────────────────────────────────────────────
+        if sub_intent == "task_due_soon":
+            today = date.today()
+            cutoff = today + timedelta(days=days_ahead)
+            tasks = (
+                await self._task_repo.list_all()
+                if can_see_all
+                else await self._task_repo.list_for_assignee(user.id)
+            )
+            due_soon = [
+                t for t in tasks
+                if t.due_date and today <= t.due_date <= cutoff and t.status != "done"
+            ]
+            if not due_soon:
+                return f"No tasks are due in the next {days_ahead} day(s).", []
+            lines = [
+                f"• [{t.id}] {t.name} — due {t.due_date} — {t.status} "
+                f"— {t.assignee.full_name if t.assignee else 'unassigned'}"
+                for t in due_soon[:30]
+            ]
+            return f"**Tasks due in the next {days_ahead} day(s) ({len(due_soon)}):**\n" + "\n".join(lines), []
+
+        # ── project_count ─────────────────────────────────────────────────────
+        if sub_intent == "project_count":
+            if not can_see_all:
+                return "You don't have permission to view project statistics.", []
+            projects = await self._project_repo.list_all()
+            counts = {s: sum(1 for p in projects if p.status == s) for s in ["active", "paused", "completed", "cancelled"]}
+            return (
+                f"There are **{len(projects)} project(s)** total: "
+                f"active={counts['active']}, paused={counts['paused']}, "
+                f"completed={counts['completed']}, cancelled={counts['cancelled']}."
+            ), []
+
+        # ── project_list ──────────────────────────────────────────────────────
+        if sub_intent == "project_list":
+            if not can_see_all:
+                return "You don't have permission to list all projects.", []
+            projects = await self._project_repo.list_all()
+            if not projects:
+                return "There are no projects in the system.", []
+            lines = [f"• [{p.id}] **{p.name}** — {p.status}" for p in projects[:30]]
+            return f"**Projects ({len(projects)} total):**\n" + "\n".join(lines), []
+
+        # ── project_by_status ─────────────────────────────────────────────────
+        if sub_intent == "project_by_status":
+            if not can_see_all:
+                return "You don't have permission to view project statistics.", []
+            projects = await self._project_repo.list_all()
+            if project_status:
+                filtered = [p for p in projects if p.status == project_status]
+                if not filtered:
+                    return f"There are no projects with status **{project_status}**.", []
+                lines = [f"• [{p.id}] **{p.name}**" for p in filtered[:30]]
+                return f"**{project_status.title()} projects ({len(filtered)}):**\n" + "\n".join(lines), []
+            counts = {s: sum(1 for p in projects if p.status == s) for s in ["active", "paused", "completed", "cancelled"]}
+            return (
+                f"**Project status breakdown ({len(projects)} total):**\n"
+                f"• Active: {counts['active']}\n"
+                f"• Paused: {counts['paused']}\n"
+                f"• Completed: {counts['completed']}\n"
+                f"• Cancelled: {counts['cancelled']}"
+            ), []
+
+        # ── project_progress ──────────────────────────────────────────────────
+        if sub_intent == "project_progress":
+            if not project_name:
+                return "Which project are you asking about?", []
+            project = await self._resolve_project(project_name)
+            if not project:
+                return f"I couldn't find a project named **{project_name}**.", []
+            tasks = await self._task_repo.list_by_project(project.id)
+            total = len(tasks)
+            if total == 0:
+                return f"Project **{project.name}** has no tasks yet. Status: {project.status}.", []
+            counts = {s: sum(1 for t in tasks if t.status == s) for s in ["todo", "in_progress", "pending_review", "done"]}
+            pct = round(counts["done"] / total * 100)
+            return (
+                f"**Project '{project.name}' — {project.status}**\n"
+                f"Progress: {counts['done']}/{total} tasks done ({pct}%)\n"
+                f"• To Do: {counts['todo']}\n"
+                f"• In Progress: {counts['in_progress']}\n"
+                f"• Pending Review: {counts['pending_review']}\n"
+                f"• Done: {counts['done']}"
+            ), []
+
+        # ── team_count ────────────────────────────────────────────────────────
+        if sub_intent == "team_count":
+            if not can_see_all:
+                return "You don't have permission to view team statistics.", []
+            teams = await self._team_repo.list_all()
+            return f"There are **{len(teams)} team(s)** in the system.", []
+
+        # ── team_list ─────────────────────────────────────────────────────────
+        if sub_intent == "team_list":
+            if not can_see_all:
+                return "You don't have permission to list all teams.", []
+            teams = await self._team_repo.list_all()
+            if not teams:
+                return "There are no teams in the system.", []
+            lines = [
+                f"• **{t.name}** — managed by "
+                f"{t.team_manager.full_name if t.team_manager else 'unassigned'} "
+                f"— {len(t.memberships)} member(s)"
+                for t in teams[:30]
+            ]
+            return f"**Teams ({len(teams)} total):**\n" + "\n".join(lines), []
+
+        # ── team_members ──────────────────────────────────────────────────────
+        if sub_intent == "team_members":
+            if not team_name:
+                return "Which team are you asking about?", []
+            team = await self._resolve_team(team_name)
+            if not team:
+                return f"I couldn't find a team named **{team_name}**.", []
+            members = [m.user for m in team.memberships if m.user]
+            if not members:
+                return f"Team **{team.name}** has no members.", []
+            lines = [f"• {m.full_name} ({m.role.replace('_', ' ')})" for m in members]
+            return f"**{team.name} — {len(members)} member(s):**\n" + "\n".join(lines), []
+
+        # ── team_workload ─────────────────────────────────────────────────────
+        if sub_intent == "team_workload":
+            if not team_name:
+                return "Which team are you asking about?", []
+            team = await self._resolve_team(team_name)
+            if not team:
+                return f"I couldn't find a team named **{team_name}**.", []
+            tasks = await self._task_repo.list_by_team(team.id)
+            if not tasks:
+                return f"Team **{team.name}** has no tasks.", []
+            counts = {s: sum(1 for t in tasks if t.status == s) for s in ["todo", "in_progress", "pending_review", "done"]}
+            per_member: dict[str, int] = {}
+            for t in tasks:
+                label = t.assignee.full_name if t.assignee else "Unassigned"
+                per_member[label] = per_member.get(label, 0) + 1
+            member_lines = [
+                f"• {name}: {count} task(s)"
+                for name, count in sorted(per_member.items(), key=lambda x: -x[1])
+            ]
+            return (
+                f"**Team '{team.name}' workload — {len(tasks)} task(s):**\n"
+                f"todo={counts['todo']}, in_progress={counts['in_progress']}, "
+                f"pending_review={counts['pending_review']}, done={counts['done']}\n\n"
+                + "\n".join(member_lines)
+            ), []
+
+        # ── workload_summary ──────────────────────────────────────────────────
+        if sub_intent == "workload_summary":
+            if not can_see_all:
+                tasks = await self._task_repo.list_for_assignee(user.id)
+                counts = {s: sum(1 for t in tasks if t.status == s) for s in ["todo", "in_progress", "pending_review", "done"]}
+                return (
+                    f"**Your workload ({len(tasks)} task(s)):**\n"
+                    f"• To Do: {counts['todo']}\n"
+                    f"• In Progress: {counts['in_progress']}\n"
+                    f"• Pending Review: {counts['pending_review']}\n"
+                    f"• Done: {counts['done']}"
+                ), []
+            tasks = await self._task_repo.list_all()
+            users = await self._user_repo.list_all()
+            projects = await self._project_repo.list_all()
+            teams = await self._team_repo.list_all()
+            today = date.today()
+            overdue = sum(1 for t in tasks if t.due_date and t.due_date < today and t.status != "done")
+            counts = {s: sum(1 for t in tasks if t.status == s) for s in ["todo", "in_progress", "pending_review", "done"]}
+            return (
+                f"**System overview:**\n"
+                f"• Users: {len(users)}\n"
+                f"• Teams: {len(teams)}\n"
+                f"• Projects: {len(projects)}\n"
+                f"• Tasks: {len(tasks)} total\n"
+                f"  — To Do: {counts['todo']}\n"
+                f"  — In Progress: {counts['in_progress']}\n"
+                f"  — Pending Review: {counts['pending_review']}\n"
+                f"  — Done: {counts['done']}\n"
+                f"  — Overdue: {overdue}"
+            ), []
+
+        # Unknown sub-intent — fall back to general
+        logger.info("DB query sub_intent %r unrecognized — falling back to general", sub_intent)
+        return await self._handle_general(user, message, history)
+
     # ─── General Q&A ─────────────────────────────────────────────────────────
 
     async def _handle_general(
@@ -688,6 +1201,14 @@ class ChatService:
                 return u.id
         return fallback
 
+    async def _resolve_user_by_name(self, name: str) -> User | None:
+        users = await self._user_repo.list_all()
+        name_lower = name.lower()
+        for u in users:
+            if name_lower in u.full_name.lower() or name_lower in u.email.lower():
+                return u
+        return None
+
     async def _resolve_project_id(self, name: str | None) -> int | None:
         if not name:
             return None
@@ -698,6 +1219,14 @@ class ChatService:
                 return p.id
         return None
 
+    async def _resolve_project(self, name: str):
+        projects = await self._project_repo.list_all()
+        name_lower = name.lower()
+        for p in projects:
+            if name_lower in p.name.lower():
+                return p
+        return None
+
     async def _resolve_team_id(self, name: str | None) -> int | None:
         if not name:
             return None
@@ -706,6 +1235,14 @@ class ChatService:
         for t in teams:
             if name_lower in t.name.lower():
                 return t.id
+        return None
+
+    async def _resolve_team(self, name: str):
+        teams = await self._team_repo.list_all()
+        name_lower = name.lower()
+        for t in teams:
+            if name_lower in t.name.lower():
+                return t
         return None
 
     @staticmethod

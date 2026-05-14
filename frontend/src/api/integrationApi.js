@@ -16,9 +16,7 @@ export const integrationApi = {
   syncMicrosoftRecent() {
     return apiClient.post("/integrations/microsoft/sync-recent", {});
   },
-  async disconnectAccount(accountId) {
-    return apiFetch(`/integrations/accounts/${accountId}`, {
-      method: "DELETE",
-    });
+  disconnectAccount(accountId) {
+    return apiClient.delete(`/integrations/accounts/${accountId}`);
   },
 };
