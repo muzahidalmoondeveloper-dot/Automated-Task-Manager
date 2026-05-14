@@ -84,27 +84,27 @@ def start_scheduler():
         return
 
     # TESTING: runs every 1 minute.
-    # scheduler.add_job(
-    #     run_daily_ai_task_sync,
-    #     trigger="interval",
-    #     minutes=1,
-    #     id="daily_ai_task_sync",
-    #     replace_existing=True,
-    #     max_instances=1,
-    #     coalesce=True,
-    # )
-
-    # PRODUCTION: uncomment below and remove the interval job above.
     scheduler.add_job(
         run_daily_ai_task_sync,
-        trigger="cron",
-        hour=6,
-        minute=0,
+        trigger="interval",
+        minutes=5,
         id="daily_ai_task_sync",
         replace_existing=True,
         max_instances=1,
         coalesce=True,
     )
+
+    # PRODUCTION: uncomment below and remove the interval job above.
+    # scheduler.add_job(
+    #     run_daily_ai_task_sync,
+    #     trigger="cron",
+    #     hour=6,
+    #     minute=0,
+    #     id="daily_ai_task_sync",
+    #     replace_existing=True,
+    #     max_instances=1,
+    #     coalesce=True,
+    # )
 
     scheduler.start()
 
