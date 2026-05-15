@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
+from app.core.roles import TEAM_MEMBER
 from app.core.security import create_access_token, hash_password, verify_password
 from app.models.user import User
 from app.repositories.user_repository import UserRepository
@@ -13,7 +14,6 @@ from app.schemas.auth import (
     ForgotPasswordRequest,
     LoginPasswordResponse,
     LoginRequest,
-    RegisterRequest,
     ResendOTPRequest,
     ResetPasswordRequest,
     TokenResponse,
@@ -60,11 +60,24 @@ async def register(
     existing_user = await user_repo.get_by_email(payload.email)
 
     if existing_user:
+        # User registered but never verified — resend OTP instead of erroring
+        if existing_user.email_verified_at is None and not existing_user.is_active:
+            await security_service.create_and_send_otp(
+                user=existing_user,
+                email=existing_user.email,
+                purpose="register",
+            )
+            return {
+                "message": "You have already registered. A new OTP has been sent to your email.",
+                "email": existing_user.email,
+            }
         await security_service.record_failed_attempt(ip_address)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email already registered.",
         )
+
+    payload.role = TEAM_MEMBER  # public registration always creates team members
 
     user = await user_repo.create(payload)
 
@@ -153,13 +166,8 @@ async def login(
             detail="Invalid email or password.",
         )
 
-    if not user.is_active:
-        await security_service.record_failed_attempt(ip_address)
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User account is inactive.",
-        )
-
+    # Check email verification before is_active — unverified users should be
+    # redirected to OTP, not told their account is inactive.
     if user.email_verified_at is None:
         await security_service.create_and_send_otp(
             user=user,
@@ -175,6 +183,13 @@ async def login(
             access_token=None,
             token_type="bearer",
             user=None,
+        )
+
+    if not user.is_active:
+        await security_service.record_failed_attempt(ip_address)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User account is inactive.",
         )
 
 
