@@ -28,10 +28,10 @@ async def read_current_user(
     return UserRead.model_validate(current_user)
 
 
-async def get_managed_team_for_user(
+async def get_managed_teams_for_user(
     db: AsyncSession,
     manager_id: int,
-) -> Team | None:
+) -> list[Team]:
     result = await db.execute(
         select(Team)
         .where(Team.team_manager_id == manager_id)
@@ -39,9 +39,9 @@ async def get_managed_team_for_user(
             selectinload(Team.memberships).selectinload(TeamMembership.user),
             selectinload(Team.team_manager),
         )
+        .order_by(Team.name.asc())
     )
-
-    return result.scalar_one_or_none()
+    return list(result.scalars().unique().all())
 
 
 async def add_user_to_team_if_missing(
@@ -81,18 +81,24 @@ async def list_users(
         users = await user_repo.list_all()
         return [UserRead.model_validate(user) for user in users]
 
-    managed_team = await get_managed_team_for_user(db, current_user.id)
+    managed_teams = await get_managed_teams_for_user(db, current_user.id)
 
-    if managed_team is None:
+    if not managed_teams:
         return []
 
-    users = [
-        membership.user
-        for membership in managed_team.memberships
-        if membership.user is not None and membership.user.role == TEAM_MEMBER
-    ]
+    seen_ids: set[int] = set()
+    members: list[User] = []
+    for team in managed_teams:
+        for membership in team.memberships:
+            if (
+                membership.user is not None
+                and membership.user.role == TEAM_MEMBER
+                and membership.user.id not in seen_ids
+            ):
+                seen_ids.add(membership.user.id)
+                members.append(membership.user)
 
-    return [UserRead.model_validate(user) for user in users]
+    return [UserRead.model_validate(u) for u in members]
 
 
 @router.get("/team-managers", response_model=list[UserRead])
@@ -130,13 +136,31 @@ async def create_user(
     managed_team = None
 
     if current_user.role == TEAM_MANAGER:
-        managed_team = await get_managed_team_for_user(db, current_user.id)
+        managed_teams = await get_managed_teams_for_user(db, current_user.id)
 
-        if managed_team is None:
+        if not managed_teams:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="You are not assigned as manager of any team.",
             )
+
+        if len(managed_teams) == 1:
+            managed_team = managed_teams[0]
+        else:
+            if payload.managed_team_id is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="You manage multiple teams. Please specify which team to add the user to.",
+                )
+            managed_team = next(
+                (t for t in managed_teams if t.id == payload.managed_team_id),
+                None,
+            )
+            if managed_team is None:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You do not manage the specified team.",
+                )
 
     user = await user_repo.create(payload)
 
@@ -203,16 +227,17 @@ async def delete_user(
             detail="User not found.",
         )
 
-    managed_team_result = await db.execute(
+    managed_teams_result = await db.execute(
         select(Team).where(Team.team_manager_id == user_id)
     )
-    managed_team = managed_team_result.scalar_one_or_none()
+    managed_teams = list(managed_teams_result.scalars().all())
 
-    if managed_team:
+    if managed_teams:
+        team_names = ", ".join(f"'{t.name}'" for t in managed_teams)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                f"This user is the manager of team '{managed_team.name}'. "
+                f"This user is the manager of team(s) {team_names}. "
                 "Reassign the team manager before deleting this user."
             ),
         )
