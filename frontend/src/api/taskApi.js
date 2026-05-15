@@ -1,8 +1,22 @@
 import { apiClient } from "./client";
 
+function buildQuery(params = {}) {
+  const qs = Object.entries(params)
+    .filter(([, v]) => v !== undefined && v !== null && v !== "" && v !== false)
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+    .join("&");
+  return qs ? `?${qs}` : "";
+}
+
 export const taskApi = {
-  list() {
-    return apiClient.get("/tasks");
+  /** Admin / Manager only — all tasks with optional filters */
+  list(params = {}) {
+    return apiClient.get(`/tasks${buildQuery(params)}`);
+  },
+
+  /** All roles — only the logged-in user's assigned tasks */
+  listMy(params = {}) {
+    return apiClient.get(`/tasks/my${buildQuery(params)}`);
   },
 
   listByProject(projectId) {

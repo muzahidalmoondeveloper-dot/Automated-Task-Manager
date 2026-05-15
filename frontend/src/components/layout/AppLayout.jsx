@@ -14,6 +14,7 @@ export default function AppLayout() {
   const { user } = useAuth();
   const [celebrationTaskName, setCelebrationTaskName] = useState(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
   const seenIdsRef = useRef(new Set());
 
   const pollNotifications = useCallback(async () => {
@@ -21,6 +22,8 @@ export default function AppLayout() {
 
     try {
       const notifications = await notificationApi.listUnread();
+      setUnreadCount(notifications.length);
+
       const approvals = notifications.filter((n) => n.type === "task_approved");
 
       for (const n of approvals) {
@@ -28,6 +31,7 @@ export default function AppLayout() {
 
         seenIdsRef.current.add(n.id);
         await notificationApi.markRead(n.id);
+        setUnreadCount((prev) => Math.max(0, prev - 1));
 
         const match = n.message.match(/^Your task '(.+)' was approved\.$/);
         setCelebrationTaskName(match ? match[1] : n.title);
@@ -44,6 +48,10 @@ export default function AppLayout() {
     return () => clearInterval(id);
   }, [pollNotifications]);
 
+  function handleUnreadCountChange(delta) {
+    setUnreadCount((prev) => Math.max(0, prev + delta));
+  }
+
   return (
     <div className="min-h-screen bg-slate-100">
       <Sidebar onCollapseChange={setSidebarCollapsed} />
@@ -53,7 +61,11 @@ export default function AppLayout() {
           sidebarCollapsed ? "lg:pl-20" : "lg:pl-72"
         }`}
       >
-        <Navbar />
+        <Navbar
+          unreadCount={unreadCount}
+          onUnreadCountChange={handleUnreadCountChange}
+          onUnreadCountReset={() => setUnreadCount(0)}
+        />
 
         <main className="px-4 py-6 sm:px-6 lg:px-8">
           <div className="mx-auto w-full max-w-[1700px]">

@@ -163,7 +163,7 @@ export default function DashboardPage() {
       setIsLoading(true);
 
       if (isTeamMember) {
-        const taskData = await taskApi.list();
+        const taskData = await taskApi.listMy();
         setStats({ ...initialStats, tasks: Array.isArray(taskData) ? taskData : [] });
         return;
       }
