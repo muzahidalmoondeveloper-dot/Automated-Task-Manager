@@ -8,6 +8,7 @@ from app.schemas.user import UserRead
 
 
 TASK_STATUSES = {"todo", "in_progress", "pending_review", "done"}
+TASK_PRIORITIES = {"low", "medium", "high"}
 
 
 class TaskCreate(BaseModel):
@@ -18,12 +19,20 @@ class TaskCreate(BaseModel):
     project_id: int | None = None
     team_id: int | None = None
     status: str = "todo"
+    priority: str = "medium"
 
     @field_validator("status")
     @classmethod
     def validate_status(cls, value: str) -> str:
         if value not in TASK_STATUSES:
             raise ValueError("Invalid task status.")
+        return value
+
+    @field_validator("priority")
+    @classmethod
+    def validate_priority(cls, value: str) -> str:
+        if value not in TASK_PRIORITIES:
+            raise ValueError("Invalid task priority.")
         return value
 
     @model_validator(mode="after")
@@ -41,12 +50,20 @@ class TaskUpdate(BaseModel):
     project_id: int | None = None
     team_id: int | None = None
     status: str | None = None
+    priority: str | None = None
 
     @field_validator("status")
     @classmethod
     def validate_status(cls, value: str | None) -> str | None:
         if value is not None and value not in TASK_STATUSES:
             raise ValueError("Invalid task status.")
+        return value
+
+    @field_validator("priority")
+    @classmethod
+    def validate_priority(cls, value: str | None) -> str | None:
+        if value is not None and value not in TASK_PRIORITIES:
+            raise ValueError("Invalid task priority.")
         return value
 
     @model_validator(mode="after")
@@ -73,6 +90,7 @@ class TaskRead(BaseModel):
     start_date: date | None = None
     due_date: date | None = None
     status: str
+    priority: str = "medium"
     assignee_id: int | None = None
     project_id: int | None = None
     team_id: int | None = None
