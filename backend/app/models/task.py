@@ -24,6 +24,14 @@ class Task(Base):
         index=True,
     )
 
+    priority: Mapped[str] = mapped_column(
+        String(20),
+        default="medium",
+        server_default="medium",
+        nullable=False,
+        index=True,
+    )
+
     assignee_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,

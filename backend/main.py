@@ -29,6 +29,9 @@ async def lifespan(app: FastAPI):
         await conn.execute(text(
             "ALTER TABLE meeting_transcripts ADD COLUMN IF NOT EXISTS tasks_extracted BOOLEAN NOT NULL DEFAULT FALSE"
         ))
+        await conn.execute(text(
+            "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS priority VARCHAR(20) NOT NULL DEFAULT 'medium'"
+        ))
 
     await seed_admin()
 

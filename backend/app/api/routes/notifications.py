@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +20,7 @@ class NotificationRead(BaseModel):
     message: str
     type: str
     is_read: bool
+    created_at: datetime
 
     model_config = {"from_attributes": True}
 
@@ -25,6 +28,7 @@ class NotificationRead(BaseModel):
 @router.get("", response_model=list[NotificationRead])
 async def list_notifications(
     unread_only: bool = False,
+    limit: int = Query(default=50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -33,10 +37,26 @@ async def list_notifications(
     if unread_only:
         stmt = stmt.where(Notification.is_read == False)  # noqa: E712
 
-    stmt = stmt.order_by(Notification.created_at.desc())
+    stmt = stmt.order_by(Notification.created_at.desc()).limit(limit)
 
     result = await db.execute(stmt)
     return result.scalars().all()
+
+
+@router.patch("/read-all", status_code=status.HTTP_204_NO_CONTENT)
+async def mark_all_notifications_read(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    await db.execute(
+        update(Notification)
+        .where(
+            Notification.user_id == current_user.id,
+            Notification.is_read == False,  # noqa: E712
+        )
+        .values(is_read=True)
+    )
+    await db.commit()
 
 
 @router.patch("/{notification_id}/read", response_model=NotificationRead)

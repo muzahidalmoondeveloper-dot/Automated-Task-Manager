@@ -1,6 +1,6 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -39,6 +39,7 @@ def serialize_task(task: Task) -> TaskDetailRead:
         start_date=task.start_date,
         due_date=task.due_date,
         status=task.status,
+        priority=getattr(task, "priority", "medium"),
         assignee_id=task.assignee_id,
         project_id=task.project_id,
         team_id=task.team_id,
@@ -76,6 +77,20 @@ async def create_notification(
     )
 
 
+async def _has_unread_notification(
+    db: AsyncSession, user_id: int, task_id: int, type_: str
+) -> bool:
+    result = await db.execute(
+        select(Notification).where(
+            Notification.user_id == user_id,
+            Notification.task_id == task_id,
+            Notification.type == type_,
+            Notification.is_read == False,  # noqa: E712
+        )
+    )
+    return result.scalar_one_or_none() is not None
+
+
 async def get_task_or_404(db: AsyncSession, task_id: int) -> Task:
     repository = TaskRepository(db)
     task = await repository.get_by_id(task_id)
@@ -98,20 +113,110 @@ async def get_task_team(db: AsyncSession, task: Task) -> Team | None:
     return result.scalar_one_or_none()
 
 
-@router.get("", response_model=list[TaskDetailRead])
-async def list_tasks(
+def _apply_task_filters(
+    tasks: list[Task],
+    *,
+    status_filter: str | None,
+    priority_filter: str | None,
+    due_date_from: date | None,
+    due_date_to: date | None,
+    overdue: bool,
+    project_id: int | None,
+    team_id: int | None,
+    assignee_id: int | None,
+) -> list[Task]:
+    today = date.today()
+    result = tasks
+
+    if status_filter:
+        result = [t for t in result if t.status == status_filter]
+    if priority_filter:
+        result = [t for t in result if getattr(t, "priority", "medium") == priority_filter]
+    if project_id:
+        result = [t for t in result if t.project_id == project_id]
+    if team_id:
+        result = [t for t in result if t.team_id == team_id]
+    if assignee_id:
+        result = [t for t in result if t.assignee_id == assignee_id]
+    if due_date_from:
+        result = [t for t in result if t.due_date and t.due_date >= due_date_from]
+    if due_date_to:
+        result = [t for t in result if t.due_date and t.due_date <= due_date_to]
+    if overdue:
+        result = [
+            t for t in result
+            if t.due_date and t.due_date < today and t.status not in {"done", "pending_review"}
+        ]
+
+    return result
+
+
+# ─── My Tasks (all roles) ─────────────────────────────────────────────────────
+
+@router.get("/my", response_model=list[TaskDetailRead])
+async def list_my_tasks(
+    status_filter: str | None = Query(default=None, alias="status"),
+    priority_filter: str | None = Query(default=None, alias="priority"),
+    due_date_from: date | None = Query(default=None),
+    due_date_to: date | None = Query(default=None),
+    overdue: bool = Query(default=False),
+    project_id: int | None = Query(default=None),
+    team_id: int | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     repository = TaskRepository(db)
+    tasks = await repository.list_for_assignee(current_user.id)
 
-    if current_user.role in {ADMIN, TEAM_MANAGER}:
-        tasks = await repository.list_all()
-    else:
-        tasks = await repository.list_for_assignee(current_user.id)
+    tasks = _apply_task_filters(
+        tasks,
+        status_filter=status_filter,
+        priority_filter=priority_filter,
+        due_date_from=due_date_from,
+        due_date_to=due_date_to,
+        overdue=overdue,
+        project_id=project_id,
+        team_id=team_id,
+        assignee_id=None,
+    )
 
     return [serialize_task(task) for task in tasks]
 
+
+# ─── All Tasks (admin / team_manager only) ────────────────────────────────────
+
+@router.get("", response_model=list[TaskDetailRead])
+async def list_tasks(
+    status_filter: str | None = Query(default=None, alias="status"),
+    priority_filter: str | None = Query(default=None, alias="priority"),
+    assignee_id: int | None = Query(default=None),
+    project_id: int | None = Query(default=None),
+    team_id: int | None = Query(default=None),
+    due_date_from: date | None = Query(default=None),
+    due_date_to: date | None = Query(default=None),
+    overdue: bool = Query(default=False),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_admin_or_team_manager),
+):
+    repository = TaskRepository(db)
+    tasks = await repository.list_all()
+
+    tasks = _apply_task_filters(
+        tasks,
+        status_filter=status_filter,
+        priority_filter=priority_filter,
+        due_date_from=due_date_from,
+        due_date_to=due_date_to,
+        overdue=overdue,
+        project_id=project_id,
+        team_id=team_id,
+        assignee_id=assignee_id,
+    )
+
+    return [serialize_task(task) for task in tasks]
+
+
+# ─── Create task ──────────────────────────────────────────────────────────────
 
 @router.post("", response_model=TaskDetailRead, status_code=status.HTTP_201_CREATED)
 async def create_task(
@@ -150,8 +255,22 @@ async def create_task(
 
     task = await task_repo.create(payload, created_by_id=current_user.id)
 
+    # Notify the assignee (skip if assigning to yourself)
+    if payload.assignee_id and payload.assignee_id != current_user.id:
+        await create_notification(
+            db=db,
+            user_id=payload.assignee_id,
+            task_id=task.id,
+            title="New task assigned to you",
+            message=f"You have been assigned a new task: '{task.name}'.",
+            type_="task_assigned",
+        )
+        await db.commit()
+
     return serialize_task(task)
 
+
+# ─── List by project ──────────────────────────────────────────────────────────
 
 @router.get("/project/{project_id}", response_model=list[TaskDetailRead])
 async def list_tasks_by_project(
@@ -180,6 +299,8 @@ async def list_tasks_by_project(
     return [serialize_task(task) for task in own_tasks]
 
 
+# ─── List by team ─────────────────────────────────────────────────────────────
+
 @router.get("/team/{team_id}", response_model=list[TaskDetailRead])
 async def list_tasks_by_team(
     team_id: int,
@@ -207,6 +328,8 @@ async def list_tasks_by_team(
     return [serialize_task(task) for task in own_tasks]
 
 
+# ─── Get single task ──────────────────────────────────────────────────────────
+
 @router.get("/{task_id}", response_model=TaskDetailRead)
 async def get_task(
     task_id: int,
@@ -223,6 +346,8 @@ async def get_task(
 
     return serialize_task(task)
 
+
+# ─── Update task status ───────────────────────────────────────────────────────
 
 @router.patch("/{task_id}/status", response_model=TaskDetailRead)
 async def update_task_status(
@@ -296,6 +421,8 @@ async def update_task_status(
     return serialize_task(updated_task)
 
 
+# ─── Approve task ─────────────────────────────────────────────────────────────
+
 @router.post("/{task_id}/approve", response_model=TaskDetailRead)
 async def approve_task(
     task_id: int,
@@ -332,6 +459,8 @@ async def approve_task(
 
     return serialize_task(updated_task)
 
+
+# ─── Assign task back ─────────────────────────────────────────────────────────
 
 @router.post("/{task_id}/assign-back", response_model=TaskDetailRead)
 async def assign_task_back(
@@ -373,12 +502,14 @@ async def assign_task_back(
     return serialize_task(updated_task)
 
 
+# ─── Update task details ──────────────────────────────────────────────────────
+
 @router.patch("/{task_id}", response_model=TaskDetailRead)
 async def update_task(
     task_id: int,
     payload: TaskUpdate,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_admin_or_team_manager),
+    current_user: User = Depends(require_admin_or_team_manager),
 ):
     repository = TaskRepository(db)
     task = await repository.get_by_id(task_id)
@@ -399,10 +530,30 @@ async def update_task(
                 detail="Selected team is invalid.",
             )
 
+    old_assignee_id = task.assignee_id
     updated_task = await repository.update(task, payload)
+
+    # Notify new assignee when assignee changes (skip self-assignment)
+    new_assignee_id = payload.assignee_id
+    if (
+        new_assignee_id is not None
+        and new_assignee_id != old_assignee_id
+        and new_assignee_id != current_user.id
+    ):
+        await create_notification(
+            db=db,
+            user_id=new_assignee_id,
+            task_id=updated_task.id,
+            title="Task assigned to you",
+            message=f"You have been assigned task: '{updated_task.name}'.",
+            type_="task_assigned",
+        )
+        await db.commit()
 
     return serialize_task(updated_task)
 
+
+# ─── Delete task ──────────────────────────────────────────────────────────────
 
 @router.delete("/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_task(
