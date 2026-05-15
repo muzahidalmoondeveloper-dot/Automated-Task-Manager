@@ -37,19 +37,6 @@ class TeamRepository:
         result = await self.db.execute(statement)
         return list(result.scalars().unique().all())
 
-    async def list_for_manager(self, manager_id: int) -> list[Team]:
-        statement = (
-            select(Team)
-            .where(Team.team_manager_id == manager_id)
-            .options(
-                selectinload(Team.team_manager),
-                selectinload(Team.memberships).selectinload(TeamMembership.user),
-            )
-            .order_by(Team.created_at.desc())
-        )
-        result = await self.db.execute(statement)
-        return list(result.scalars().all())
-
     async def get_by_id(self, team_id: int) -> Team | None:
         statement = (
             select(Team)
