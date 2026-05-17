@@ -258,6 +258,10 @@ class ChatService:
         self._project_repo = ProjectRepository(db)
         self._team_repo = TeamRepository(db)
         self._llm = get_llm_provider()
+        # Per-request caches — populated on first access, reused within the same message.
+        self._users_cache: list | None = None
+        self._projects_cache: list | None = None
+        self._teams_cache: list | None = None
 
     # ─── Public entry point ───────────────────────────────────────────────────
 
@@ -329,10 +333,10 @@ class ChatService:
         # 8. Persist assistant reply
         assistant_msg = await self._chat_repo.add_message(session.id, "assistant", reply)
 
-        # 9. Auto-title session after first exchange
+        # 9. Auto-title session after first exchange (fire-and-forget — doesn't block response).
         if len(history) <= 2 and session.title is None:
             title_hint = file_context["filename"] if file_context else message
-            await self._auto_title_session(session, title_hint)
+            asyncio.create_task(self._auto_title_session(session, title_hint))
 
         await self._chat_repo.touch_session(session)
 
@@ -698,8 +702,25 @@ class ChatService:
 
     # ─── Analyze text ─────────────────────────────────────────────────────────
 
+    # ─── Per-request caches ───────────────────────────────────────────────────
+
+    async def _get_users(self) -> list:
+        if self._users_cache is None:
+            self._users_cache = await self._user_repo.list_all()
+        return self._users_cache
+
+    async def _get_projects(self) -> list:
+        if self._projects_cache is None:
+            self._projects_cache = await self._project_repo.list_all()
+        return self._projects_cache
+
+    async def _get_teams(self) -> list:
+        if self._teams_cache is None:
+            self._teams_cache = await self._team_repo.list_all()
+        return self._teams_cache
+
     async def _build_users_block(self) -> str:
-        all_users = await self._user_repo.list_all()
+        all_users = await self._get_users()
         if not all_users:
             return ""
         lines = "\n".join(f"- {u.full_name} <{u.email}>" for u in all_users)
@@ -1258,7 +1279,7 @@ class ChatService:
     ) -> int | None:
         if not name:
             return fallback
-        users = await self._user_repo.list_all()
+        users = await self._get_users()
         name_lower = name.lower()
         for u in users:
             if name_lower in u.full_name.lower() or name_lower in u.email.lower():
@@ -1266,7 +1287,7 @@ class ChatService:
         return fallback
 
     async def _resolve_user_by_name(self, name: str) -> User | None:
-        users = await self._user_repo.list_all()
+        users = await self._get_users()
         name_lower = name.lower()
         for u in users:
             if name_lower in u.full_name.lower() or name_lower in u.email.lower():
@@ -1276,7 +1297,7 @@ class ChatService:
     async def _resolve_project_id(self, name: str | None) -> int | None:
         if not name:
             return None
-        projects = await self._project_repo.list_all()
+        projects = await self._get_projects()
         name_lower = name.lower()
         for p in projects:
             if name_lower in p.name.lower():
@@ -1284,7 +1305,7 @@ class ChatService:
         return None
 
     async def _resolve_project(self, name: str):
-        projects = await self._project_repo.list_all()
+        projects = await self._get_projects()
         name_lower = name.lower()
         for p in projects:
             if name_lower in p.name.lower():
@@ -1294,7 +1315,7 @@ class ChatService:
     async def _resolve_team_id(self, name: str | None) -> int | None:
         if not name:
             return None
-        teams = await self._team_repo.list_all()
+        teams = await self._get_teams()
         name_lower = name.lower()
         for t in teams:
             if name_lower in t.name.lower():
@@ -1302,7 +1323,7 @@ class ChatService:
         return None
 
     async def _resolve_team(self, name: str):
-        teams = await self._team_repo.list_all()
+        teams = await self._get_teams()
         name_lower = name.lower()
         for t in teams:
             if name_lower in t.name.lower():
