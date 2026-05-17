@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import asyncio
+
 from app.models.notification import Notification
 from app.models.user import User
 from app.repositories.chat_repository import ChatRepository
@@ -20,7 +22,7 @@ from app.core.roles import TEAM_MEMBER
 from app.schemas.chat import ChatAction, ChatMessageResponse
 from app.schemas.task import TaskCreate, TaskUpdate
 from app.services.llm import get_llm_provider
-from app.worker.tasks.email_tasks import send_task_assigned_email
+from app.services.background_email import bg_send_task_assigned
 
 if TYPE_CHECKING:
     from app.models.chat import ChatMessage, ChatSession
@@ -1237,25 +1239,17 @@ class ChatService:
         assignee = await self._user_repo.get_by_id(assignee_id)
         if assignee:
             logger.info(
-                "Enqueuing task_assigned email | task_id=%s | assignee_id=%s"
+                "Scheduling task_assigned email | task_id=%s | assignee_id=%s"
                 " | assignee_email=%s | assigned_by_id=%s",
                 task_id, assignee.id, assignee.email, assigned_by_id,
             )
-            self._enqueue_email(send_task_assigned_email, task_id, assignee.id, assigned_by_id)
+            asyncio.create_task(bg_send_task_assigned(task_id, assignee.id, assigned_by_id))
         else:
             logger.warning(
                 "task_assigned email skipped — assignee not found in DB"
                 " | task_id=%s | assignee_id=%s",
                 task_id, assignee_id,
             )
-
-    @staticmethod
-    def _enqueue_email(task_fn, *args, **kwargs) -> None:
-        try:
-            task_fn.delay(*args, **kwargs)
-            logger.info("Enqueued email task %s | args=%s", task_fn.name, args)
-        except Exception as exc:
-            logger.error("Failed to enqueue email task %s | args=%s | error=%s", task_fn.name, args, exc)
 
     # ─── Helpers ──────────────────────────────────────────────────────────────
 

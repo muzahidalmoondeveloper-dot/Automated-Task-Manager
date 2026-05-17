@@ -86,10 +86,10 @@ class Settings(BaseSettings):
     SMTP_FROM_EMAIL: str = "no-reply@example.com"
     SMTP_FROM_NAME: str = "Automated Task Manager"
 
-    # ── Redis / Celery ───────────────────────────────────────────────────────
-    # Set REDIS_URL for a single-URL setup (Render Key Value).
-    # Override CELERY_BROKER_URL / CELERY_RESULT_BACKEND for split configs.
-    REDIS_URL: str = "redis://localhost:6379/0"
+    # ── Redis / Celery (disabled — app uses FastAPI BackgroundTasks) ─────────
+    # These vars are kept so existing .env files don't break on startup.
+    # They are not used by the active code path; leave them unset or empty.
+    REDIS_URL: str | None = None
     CELERY_BROKER_URL: str | None = None
     CELERY_RESULT_BACKEND: str | None = None
 
@@ -105,11 +105,11 @@ class Settings(BaseSettings):
 
     @property
     def celery_broker(self) -> str:
-        return self.CELERY_BROKER_URL or self.REDIS_URL
+        return self.CELERY_BROKER_URL or self.REDIS_URL or "redis://localhost:6379/0"
 
     @property
     def celery_backend(self) -> str:
-        return self.CELERY_RESULT_BACKEND or self.REDIS_URL
+        return self.CELERY_RESULT_BACKEND or self.REDIS_URL or "redis://localhost:6379/0"
 
 
 @lru_cache

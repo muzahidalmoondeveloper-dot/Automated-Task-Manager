@@ -1,10 +1,14 @@
 """
-Celery tasks for Microsoft data sync and AI task extraction.
+ARCHIVED — NOT USED IN THE ACTIVE CODE PATH
+============================================
+Microsoft data sync and AI task extraction are now run directly inside the
+APScheduler job (run_daily_ai_task_sync) in app.services.automation_scheduler
+— no Celery worker is required.  This file is kept for reference in case
+Celery is re-enabled.  Nothing in the active application imports from this
+module.
 
-Workflow enqueued by the scheduler:
-  1. sync_microsoft_data_task(user_id)   — fetch emails / calendar / transcripts
-  2. analyze_sources_task(user_id)        — AI extraction → create tasks
-     (auto-chained at the end of step 1)
+Original purpose: Celery tasks for Microsoft data sync and AI task extraction.
+Workflow: sync_microsoft_data_task(user_id) → analyze_sources_task(user_id).
 """
 import asyncio
 import logging
