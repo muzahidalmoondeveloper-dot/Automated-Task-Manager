@@ -1,3 +1,12 @@
+"""
+ARCHIVED — NOT USED IN THE ACTIVE CODE PATH
+============================================
+The application has migrated from Celery + Redis to FastAPI BackgroundTasks
+(for real-time email events) and APScheduler running jobs directly in-process
+(for recurring jobs).  This file is kept for reference in case Celery is
+re-enabled in the future.  Nothing in the active application imports from
+this module.
+"""
 import logging
 
 from celery import Celery

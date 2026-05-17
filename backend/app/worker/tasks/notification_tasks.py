@@ -1,9 +1,13 @@
 """
-Celery tasks for in-app due-date notifications and due-date email reminders.
+ARCHIVED — NOT USED IN THE ACTIVE CODE PATH
+============================================
+In-app due-date notifications and due-date email reminders are now handled
+directly inside APScheduler jobs in app.services.automation_scheduler — no
+Celery worker is required.  This file is kept for reference in case Celery is
+re-enabled.  Nothing in the active application imports from this module.
 
-These tasks mirror the logic that previously ran directly inside the APScheduler
-jobs.  The scheduler now only enqueues these tasks; all heavy work runs here in
-the Celery worker.
+Original purpose: Celery tasks for in-app due-date notifications and
+due-date email reminders, previously enqueued by the APScheduler jobs.
 """
 import asyncio
 import logging

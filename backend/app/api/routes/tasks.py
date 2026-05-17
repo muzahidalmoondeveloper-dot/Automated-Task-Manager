@@ -1,7 +1,7 @@
 import logging
 from datetime import date, datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,12 +29,12 @@ from app.schemas.task import (
 )
 from app.schemas.team import TeamRead
 from app.schemas.user import UserRead
-from app.worker.tasks.email_tasks import (
-    send_due_date_updated_email,
-    send_task_approved_email,
-    send_task_assigned_back_email,
-    send_task_assigned_email,
-    send_task_sent_for_review_email,
+from app.services.background_email import (
+    bg_send_due_date_updated,
+    bg_send_task_approved,
+    bg_send_task_assigned,
+    bg_send_task_assigned_back,
+    bg_send_task_sent_for_review,
 )
 
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
@@ -163,14 +163,6 @@ def _apply_task_filters(
     return result
 
 
-def _enqueue_email(task_fn, *args, **kwargs) -> None:
-    """Enqueue a Celery email task, logging if Redis is unavailable."""
-    try:
-        task_fn.delay(*args, **kwargs)
-    except Exception as exc:
-        logger.error("Failed to enqueue email task %s: %s", task_fn.name, exc)
-
-
 # ─── My Tasks (all roles) ─────────────────────────────────────────────────────
 
 @router.get("/my", response_model=list[TaskDetailRead])
@@ -241,6 +233,7 @@ async def list_tasks(
 @router.post("", response_model=TaskDetailRead, status_code=status.HTTP_201_CREATED)
 async def create_task(
     payload: TaskCreate,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_admin_or_team_manager),
 ):
@@ -297,8 +290,8 @@ async def create_task(
                 "Triggering task_assigned email | task_id=%s | assigner_id=%s | assignee_id=%s | recipient=%s",
                 task.id, current_user.id, assignee_user.id, assignee_user.email,
             )
-            _enqueue_email(
-                send_task_assigned_email,
+            background_tasks.add_task(
+                bg_send_task_assigned,
                 task.id, assignee_user.id, current_user.id,
             )
         else:
@@ -393,6 +386,7 @@ async def get_task(
 async def update_task_status(
     task_id: int,
     payload: TaskStatusUpdate,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -488,8 +482,8 @@ async def update_task_status(
                     "Triggering task_sent_for_review email | task_id=%s | submitter_id=%s | reviewer_id=%s | recipient=%s",
                     updated_task.id, current_user.id, reviewer.id, reviewer.email,
                 )
-                _enqueue_email(
-                    send_task_sent_for_review_email,
+                background_tasks.add_task(
+                    bg_send_task_sent_for_review,
                     updated_task.id, current_user.id, reviewer.id,
                 )
             else:
@@ -532,6 +526,7 @@ async def update_task_status(
 @router.post("/{task_id}/approve", response_model=TaskDetailRead)
 async def approve_task(
     task_id: int,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_admin_or_team_manager),
 ):
@@ -574,8 +569,8 @@ async def approve_task(
                 "Triggering task_approved email | task_id=%s | approver_id=%s | recipient_id=%s | recipient=%s",
                 updated_task.id, current_user.id, recipient.id, recipient.email,
             )
-            _enqueue_email(
-                send_task_approved_email,
+            background_tasks.add_task(
+                bg_send_task_approved,
                 updated_task.id, recipient.id, current_user.id,
             )
         else:
@@ -593,6 +588,7 @@ async def approve_task(
 async def assign_task_back(
     task_id: int,
     payload: AssignBackRequest,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_admin_or_team_manager),
 ):
@@ -632,8 +628,8 @@ async def assign_task_back(
             "Triggering task_assigned_back email | task_id=%s | manager_id=%s | assignee_id=%s | recipient=%s",
             updated_task.id, current_user.id, updated_task.assignee.id, updated_task.assignee.email,
         )
-        _enqueue_email(
-            send_task_assigned_back_email,
+        background_tasks.add_task(
+            bg_send_task_assigned_back,
             updated_task.id, updated_task.assignee.id, current_user.id, note,
         )
     else:
@@ -651,6 +647,7 @@ async def assign_task_back(
 async def update_task(
     task_id: int,
     payload: TaskUpdate,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_admin_or_team_manager),
 ):
@@ -704,8 +701,8 @@ async def update_task(
                 "Triggering task_assigned email (reassign) | task_id=%s | assigner_id=%s | assignee_id=%s | recipient=%s",
                 updated_task.id, current_user.id, new_assignee_user.id, new_assignee_user.email,
             )
-            _enqueue_email(
-                send_task_assigned_email,
+            background_tasks.add_task(
+                bg_send_task_assigned,
                 updated_task.id, new_assignee_user.id, current_user.id,
             )
         else:
@@ -720,8 +717,8 @@ async def update_task(
         and old_due_date != updated_task.due_date
         and updated_task.assignee
     ):
-        _enqueue_email(
-            send_due_date_updated_email,
+        background_tasks.add_task(
+            bg_send_due_date_updated,
             updated_task.id,
             updated_task.assignee.id,
             current_user.id,
