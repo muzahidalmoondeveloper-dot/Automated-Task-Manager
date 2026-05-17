@@ -120,47 +120,6 @@ def user_can_manage_task(current_user: User) -> bool:
     return current_user.role in {ADMIN, TEAM_MANAGER}
 
 
-async def get_task_team(db: AsyncSession, task: Task) -> Team | None:
-    result = await db.execute(select(Team).where(Team.id == task.team_id))
-    return result.scalar_one_or_none()
-
-
-def _apply_task_filters(
-    tasks: list[Task],
-    *,
-    status_filter: str | None,
-    priority_filter: str | None,
-    due_date_from: date | None,
-    due_date_to: date | None,
-    overdue: bool,
-    project_id: int | None,
-    team_id: int | None,
-    assignee_id: int | None,
-) -> list[Task]:
-    today = date.today()
-    result = tasks
-
-    if status_filter:
-        result = [t for t in result if t.status == status_filter]
-    if priority_filter:
-        result = [t for t in result if getattr(t, "priority", "medium") == priority_filter]
-    if project_id:
-        result = [t for t in result if t.project_id == project_id]
-    if team_id:
-        result = [t for t in result if t.team_id == team_id]
-    if assignee_id:
-        result = [t for t in result if t.assignee_id == assignee_id]
-    if due_date_from:
-        result = [t for t in result if t.due_date and t.due_date >= due_date_from]
-    if due_date_to:
-        result = [t for t in result if t.due_date and t.due_date <= due_date_to]
-    if overdue:
-        result = [
-            t for t in result
-            if t.due_date and t.due_date < today and t.status not in {"done", "pending_review"}
-        ]
-
-    return result
 
 
 # ─── My Tasks (all roles) ─────────────────────────────────────────────────────
@@ -178,20 +137,16 @@ async def list_my_tasks(
     current_user: User = Depends(get_current_user),
 ):
     repository = TaskRepository(db)
-    tasks = await repository.list_for_assignee(current_user.id)
-
-    tasks = _apply_task_filters(
-        tasks,
-        status_filter=status_filter,
-        priority_filter=priority_filter,
+    tasks = await repository.list_for_assignee(
+        current_user.id,
+        status=status_filter,
+        priority=priority_filter,
+        project_id=project_id,
+        team_id=team_id,
         due_date_from=due_date_from,
         due_date_to=due_date_to,
         overdue=overdue,
-        project_id=project_id,
-        team_id=team_id,
-        assignee_id=None,
     )
-
     return [serialize_task(task) for task in tasks]
 
 
@@ -211,20 +166,16 @@ async def list_tasks(
     current_user: User = Depends(require_admin_or_team_manager),
 ):
     repository = TaskRepository(db)
-    tasks = await repository.list_all()
-
-    tasks = _apply_task_filters(
-        tasks,
-        status_filter=status_filter,
-        priority_filter=priority_filter,
-        due_date_from=due_date_from,
-        due_date_to=due_date_to,
-        overdue=overdue,
+    tasks = await repository.list_all(
+        status=status_filter,
+        priority=priority_filter,
         project_id=project_id,
         team_id=team_id,
         assignee_id=assignee_id,
+        due_date_from=due_date_from,
+        due_date_to=due_date_to,
+        overdue=overdue,
     )
-
     return [serialize_task(task) for task in tasks]
 
 
@@ -408,7 +359,8 @@ async def update_task_status(
             task.reviewed_at = None
             task.review_note = None
 
-            team = await get_task_team(db, task)
+            # task.team is already loaded by get_task_or_404 via selectinload — no extra query needed.
+            team = task.team
 
             if team and team.team_manager_id:
                 await create_notification(
@@ -424,8 +376,7 @@ async def update_task_status(
                 )
 
             await db.commit()
-
-            updated_task = await repository.get_by_id(task.id)
+            await db.refresh(task)
 
             # Email the reviewer: team manager > member's team manager > admin fallback.
             user_repo = UserRepository(db)
@@ -480,11 +431,11 @@ async def update_task_status(
             if reviewer:
                 logger.info(
                     "Triggering task_sent_for_review email | task_id=%s | submitter_id=%s | reviewer_id=%s | recipient=%s",
-                    updated_task.id, current_user.id, reviewer.id, reviewer.email,
+                    task.id, current_user.id, reviewer.id, reviewer.email,
                 )
                 background_tasks.add_task(
                     bg_send_task_sent_for_review,
-                    updated_task.id, current_user.id, reviewer.id,
+                    task.id, current_user.id, reviewer.id,
                 )
             else:
                 logger.warning(
@@ -492,7 +443,7 @@ async def update_task_status(
                     task.id,
                 )
 
-            return serialize_task(updated_task)
+            return serialize_task(task)
 
         if payload.status not in {"todo", "in_progress"}:
             raise HTTPException(
@@ -530,7 +481,6 @@ async def approve_task(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_admin_or_team_manager),
 ):
-    repository = TaskRepository(db)
     task = await get_task_or_404(db, task_id)
 
     if task.status != "pending_review":
@@ -557,29 +507,27 @@ async def approve_task(
         )
 
     await db.commit()
+    await db.refresh(task)
 
-    updated_task = await repository.get_by_id(task.id)
-
-    # Email the person who submitted the task for review (completed_by, not necessarily current assignee)
     if completed_by_id:
         user_repo = UserRepository(db)
         recipient = await user_repo.get_by_id(completed_by_id)
         if recipient:
             logger.info(
                 "Triggering task_approved email | task_id=%s | approver_id=%s | recipient_id=%s | recipient=%s",
-                updated_task.id, current_user.id, recipient.id, recipient.email,
+                task.id, current_user.id, recipient.id, recipient.email,
             )
             background_tasks.add_task(
                 bg_send_task_approved,
-                updated_task.id, recipient.id, current_user.id,
+                task.id, recipient.id, current_user.id,
             )
         else:
             logger.warning(
                 "task_approved email skipped — submitter user not found | task_id=%s | completed_by_id=%s",
-                updated_task.id, completed_by_id,
+                task.id, completed_by_id,
             )
 
-    return serialize_task(updated_task)
+    return serialize_task(task)
 
 
 # ─── Assign task back ─────────────────────────────────────────────────────────
@@ -592,7 +540,6 @@ async def assign_task_back(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_admin_or_team_manager),
 ):
-    repository = TaskRepository(db)
     task = await get_task_or_404(db, task_id)
 
     if task.status != "pending_review":
@@ -619,26 +566,24 @@ async def assign_task_back(
         )
 
     await db.commit()
+    await db.refresh(task)
 
-    updated_task = await repository.get_by_id(task.id)
-
-    # Email the assignee with manager feedback
-    if updated_task.assignee:
+    if task.assignee:
         logger.info(
             "Triggering task_assigned_back email | task_id=%s | manager_id=%s | assignee_id=%s | recipient=%s",
-            updated_task.id, current_user.id, updated_task.assignee.id, updated_task.assignee.email,
+            task.id, current_user.id, task.assignee.id, task.assignee.email,
         )
         background_tasks.add_task(
             bg_send_task_assigned_back,
-            updated_task.id, updated_task.assignee.id, current_user.id, note,
+            task.id, task.assignee.id, current_user.id, note,
         )
     else:
         logger.warning(
             "task_assigned_back email skipped — no assignee on task | task_id=%s",
-            updated_task.id,
+            task.id,
         )
 
-    return serialize_task(updated_task)
+    return serialize_task(task)
 
 
 # ─── Update task details ──────────────────────────────────────────────────────

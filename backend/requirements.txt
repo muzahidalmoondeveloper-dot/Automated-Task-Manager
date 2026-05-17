@@ -26,9 +26,6 @@ itsdangerous==2.2.0
 # Task scheduling
 APScheduler==3.10.4
 
-# Celery + Redis background worker
-celery[redis]>=5.3.6
-redis>=5.0.0
 
 # Ollama local LLM client
 ollama>=0.3.0
