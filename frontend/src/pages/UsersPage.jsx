@@ -16,6 +16,7 @@ const initialForm = {
   email: "",
   password: "",
   role: "team_member",
+  managed_team_id: "",
 };
 
 function formatRole(role) {
@@ -108,7 +109,13 @@ export default function UsersPage() {
 
   const isEditing = editingUserId !== null;
   const isAdmin = user?.role === "admin";
+  const isTeamManager = user?.role === "team_manager";
   const canCreateAdmin = user?.role === "admin";
+
+  const managedTeams = useMemo(
+    () => teams.filter((t) => t.team_manager_id === user?.id),
+    [teams, user]
+  );
 
   const availableRoles = useMemo(() => {
     return ROLE_OPTIONS.filter((role) => {
@@ -291,8 +298,15 @@ export default function UsersPage() {
         toast.success("User updated successfully.");
       } else {
         const createPayload = {
-          ...formData,
+          full_name: formData.full_name,
+          email: formData.email,
+          password: formData.password,
+          role: formData.role,
         };
+
+        if (isTeamManager && managedTeams.length > 1 && formData.managed_team_id) {
+          createPayload.managed_team_id = Number(formData.managed_team_id);
+        }
 
         const createdUser = await userApi.create(createPayload);
 
@@ -663,8 +677,10 @@ export default function UsersPage() {
                 </h2>
 
                 <p className="mt-1 text-sm text-slate-500">
-                {isEditing
+                  {isEditing
                     ? "Leave password empty if you do not want to change it."
+                    : isTeamManager
+                    ? "New member will be added to your team."
                     : "Select a role. Team Manager can be assigned later from the Teams page."}
                 </p>
               </div>
@@ -767,6 +783,33 @@ export default function UsersPage() {
                   ))}
                 </select>
               </div>
+
+              {!isEditing && isTeamManager && managedTeams.length > 1 && (
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    Team <span className="text-red-500">*</span>
+                  </label>
+
+                  <select
+                    name="managed_team_id"
+                    value={formData.managed_team_id}
+                    onChange={handleChange}
+                    required
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  >
+                    <option value="">Select a team...</option>
+                    {managedTeams.map((team) => (
+                      <option key={team.id} value={team.id}>
+                        {team.name}
+                      </option>
+                    ))}
+                  </select>
+
+                  <p className="mt-1 text-xs text-slate-400">
+                    Choose which of your teams to add this member to.
+                  </p>
+                </div>
+              )}
 
               <div className="flex gap-3 pt-2">
                 <button
