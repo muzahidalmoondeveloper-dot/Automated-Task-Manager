@@ -154,6 +154,10 @@ function TaskCard({ task, canManageTasks, isTeamMember, user, onEdit, onDelete, 
         {task.project  && <p><span className="font-medium">Project:</span>  {task.project.name}</p>}
         {task.team     && <p><span className="font-medium">Team:</span>     {task.team.name}</p>}
         <p>
+          <span className="font-medium">Start: </span>
+          {task.start_date ? formatDate(task.start_date) : "—"}
+        </p>
+        <p>
           <span className="font-medium">Due: </span>
           {task.due_date ? (
             <span className={overdue ? "font-semibold text-red-600" : ""}>
@@ -574,7 +578,7 @@ export default function TasksPage() {
     try {
       const updated = await taskApi.updateStatus(task.id, newStatus);
       updateTaskInLists(updated);
-      if (newStatus === "done") {
+      if (updated.status === "done") {
         const isSelf = task.assignee_id === user?.id;
         setCelebrationData({ taskName: updated.name, completedByName: isSelf ? null : (task.assignee?.full_name || null) });
       } else {
@@ -682,6 +686,11 @@ export default function TasksPage() {
 
         {/* Team */}
         <td className="px-4 py-4 align-middle text-slate-700">{task.team?.name || "—"}</td>
+
+        {/* Start date */}
+        <td className="px-4 py-4 align-middle text-slate-700">
+          {task.start_date ? formatDate(task.start_date) : <span className="text-slate-400">—</span>}
+        </td>
 
         {/* Due date */}
         <td className="px-4 py-4 align-middle"><DueDateCell task={task} /></td>
@@ -830,7 +839,7 @@ export default function TasksPage() {
                   {/* Desktop table */}
                   <div className="hidden overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm md:block">
                     <div className="overflow-x-auto">
-                      <table className="w-full min-w-[900px] text-sm">
+                      <table className="w-full min-w-[1100px] text-sm">
                         <thead className="bg-slate-50">
                           <tr className="border-b border-slate-200">
                             <th className="w-10 px-4 py-3" />
@@ -838,8 +847,10 @@ export default function TasksPage() {
                             <th className="px-4 py-3 text-left font-semibold text-slate-700">Priority</th>
                             <th className="px-4 py-3 text-left font-semibold text-slate-700">Project</th>
                             <th className="px-4 py-3 text-left font-semibold text-slate-700">Team</th>
+                            <th className="px-4 py-3 text-left font-semibold text-slate-700">Start Date</th>
                             <th className="px-4 py-3 text-left font-semibold text-slate-700">Due Date</th>
                             <th className="px-4 py-3 text-left font-semibold text-slate-700">Status</th>
+                            <th className="px-4 py-3 text-right font-semibold text-slate-700">Actions</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-200">
@@ -866,6 +877,9 @@ export default function TasksPage() {
                               <td className="px-4 py-4 align-middle"><PriorityBadge priority={task.priority} /></td>
                               <td className="px-4 py-4 align-middle text-slate-700">{task.project?.name || "—"}</td>
                               <td className="px-4 py-4 align-middle text-slate-700">{task.team?.name || "—"}</td>
+                              <td className="px-4 py-4 align-middle text-slate-700">
+                                {task.start_date ? formatDate(task.start_date) : <span className="text-slate-400">—</span>}
+                              </td>
                               <td className="px-4 py-4 align-middle"><DueDateCell task={task} /></td>
                               <td className="px-4 py-4 align-middle">
                                 {canChangeStatus(task) ? (
@@ -877,10 +891,45 @@ export default function TasksPage() {
                                   <StatusBadge status={task.status} />
                                 )}
                               </td>
+                              <td className="relative px-4 py-4 text-right align-middle">
+                                {canManageTasks && (
+                                  task.status === "pending_review" ? (
+                                    <div className="flex justify-end gap-2">
+                                      <button type="button" onClick={() => approveTask(task)} disabled={reviewActionId === task.id}
+                                        className="rounded-lg bg-green-600 px-3 py-2 text-xs font-semibold text-white hover:bg-green-700 disabled:opacity-60">
+                                        Approve
+                                      </button>
+                                      <button type="button" onClick={() => assignBackTask(task)} disabled={reviewActionId === task.id}
+                                        className="rounded-lg border border-amber-300 px-3 py-2 text-xs font-semibold text-amber-700 hover:bg-amber-50 disabled:opacity-60">
+                                        Assign Back
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <>
+                                      <button type="button" onClick={() => setOpenMenuId((p) => (p === task.id ? null : task.id))}
+                                        className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100">
+                                        <ThreeDotsIcon />
+                                      </button>
+                                      {openMenuId === task.id && (
+                                        <div className="absolute right-4 top-12 z-20 w-36 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
+                                          <button type="button" onClick={() => { setOpenMenuId(null); handleEdit(task); }}
+                                            className="block w-full px-4 py-2.5 text-left text-sm font-medium text-slate-700 hover:bg-slate-50">
+                                            Edit
+                                          </button>
+                                          <button type="button" onClick={() => { setOpenMenuId(null); handleDelete(task); }}
+                                            className="block w-full px-4 py-2.5 text-left text-sm font-medium text-red-600 hover:bg-red-50">
+                                            Delete
+                                          </button>
+                                        </div>
+                                      )}
+                                    </>
+                                  )
+                                )}
+                              </td>
                             </tr>
                           )) : (
                             <tr>
-                              <td colSpan={7}>
+                              <td colSpan={9}>
                                 <EmptyState message={myFiltersActive ? "No tasks match your filters." : "No tasks assigned to you yet."} />
                               </td>
                             </tr>
@@ -1119,6 +1168,7 @@ export default function TasksPage() {
                             <th className="px-4 py-3 text-left font-semibold text-slate-700">Project</th>
                             <th className="px-4 py-3 text-left font-semibold text-slate-700">Assignee</th>
                             <th className="px-4 py-3 text-left font-semibold text-slate-700">Team</th>
+                            <th className="px-4 py-3 text-left font-semibold text-slate-700">Start Date</th>
                             <th className="px-4 py-3 text-left font-semibold text-slate-700">Due Date</th>
                             <th className="px-4 py-3 text-left font-semibold text-slate-700">Status</th>
                             <th className="px-4 py-3 text-right font-semibold text-slate-700">Actions</th>
@@ -1129,7 +1179,7 @@ export default function TasksPage() {
                             <TaskTableRow key={task.id} task={task} />
                           )) : (
                             <tr>
-                              <td colSpan={9}>
+                              <td colSpan={10}>
                                 <EmptyState message={allFiltersActive ? "No tasks match your filters." : "No tasks yet. Create one above."} />
                               </td>
                             </tr>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
 
 import { useAuth } from "../context/AuthContext";
@@ -127,6 +127,409 @@ function StatusRow({ label, value, total, tone }) {
   );
 }
 
+function CumulativeLineChart({ data }) {
+  const svgRef = useRef(null);
+  const [hoveredIdx, setHoveredIdx] = useState(null);
+  const [tooltip, setTooltip] = useState(null);
+
+  const SVG_W = 560, SVG_H = 250;
+  const PAD = { l: 44, r: 20, t: 12, b: 34 };
+  const W = SVG_W - PAD.l - PAD.r;
+  const H = SVG_H - PAD.t - PAD.b;
+  const BAR_ZONE = H * 0.28;
+  const LINE_ZONE = H - BAR_ZONE;
+
+  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const fmtShort = (s) => { const p = s.split("-"); return `${MONTHS[+p[1]-1]} ${+p[2]}`; };
+  const fmtFull  = (s) => { const p = s.split("-").map(Number); return `${MONTHS[p[1]-1]} ${p[2]}, ${p[0]}`; };
+
+  const derived = useMemo(() => {
+    const n = data.points.length;
+    if (!n) return { pts: [], coords: [], bestDay: 0, avgDaily: "0", maxY: 1 };
+
+    const pts = data.points.map((p, i) => ({
+      ...p,
+      daily: p.cumulative - (i > 0 ? data.points[i - 1].cumulative : 0),
+    }));
+    const bestDay = Math.max(...pts.map((p) => p.daily));
+    const avgDaily = (data.maxCount / n).toFixed(1);
+    const maxY = Math.max(data.maxCount, 1);
+    const toX = (i) => PAD.l + (n === 1 ? W / 2 : (i / (n - 1)) * W);
+    const toY = (v) => PAD.t + LINE_ZONE * (1 - v / maxY);
+    const coords = pts.map((p, i) => ({ ...p, x: toX(i), y: toY(p.cumulative) }));
+    return { pts, coords, bestDay, avgDaily, maxY };
+  }, [data]);
+
+  function buildSmoothPath(pts) {
+    if (!pts.length) return "";
+    if (pts.length === 1) return `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`;
+    let d = `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`;
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1], b = pts[i];
+      const cp = (b.x - a.x) * 0.45;
+      d += ` C ${(a.x + cp).toFixed(1)} ${a.y.toFixed(1)},${(b.x - cp).toFixed(1)} ${b.y.toFixed(1)},${b.x.toFixed(1)} ${b.y.toFixed(1)}`;
+    }
+    return d;
+  }
+
+  function handleMouseMove(e) {
+    const svg = svgRef.current;
+    if (!svg || !derived.coords.length) return;
+    const rect = svg.getBoundingClientRect();
+    const vb = svg.viewBox.baseVal;
+    const svgX = (e.clientX - rect.left) * (vb.width / rect.width);
+    let nearestIdx = 0, minDist = Infinity;
+    derived.coords.forEach((c, i) => {
+      const d = Math.abs(c.x - svgX);
+      if (d < minDist) { minDist = d; nearestIdx = i; }
+    });
+    const wrapRect = svg.parentElement?.getBoundingClientRect();
+    if (!wrapRect) return;
+    setHoveredIdx(nearestIdx);
+    setTooltip({ x: e.clientX - wrapRect.left, y: e.clientY - wrapRect.top, ...derived.coords[nearestIdx] });
+  }
+
+  if (!data.points.length) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-3 py-14 text-center">
+        <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-emerald-50">
+          <svg className="h-6 w-6 text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+          </svg>
+        </div>
+        <p className="text-sm font-semibold text-slate-500">No completions this week</p>
+        <p className="text-xs text-slate-400">Completed tasks will appear here</p>
+      </div>
+    );
+  }
+
+  const { coords, bestDay, avgDaily, maxY, pts } = derived;
+  const n = coords.length;
+  const lineD = buildSmoothPath(coords);
+  const barBaseY = PAD.t + H;
+  const maxBarH = BAR_ZONE * 0.82;
+  const maxDailyForBar = Math.max(bestDay, 1);
+  const barW = Math.min((W / n) * 0.44, 22);
+  const areaBaseY = (PAD.t + LINE_ZONE).toFixed(1);
+  const areaD = `${lineD} L ${coords[n-1].x.toFixed(1)} ${areaBaseY} L ${coords[0].x.toFixed(1)} ${areaBaseY} Z`;
+  const yTicks = [...new Set([0, Math.round(maxY * 0.5), maxY])];
+  const hov = hoveredIdx !== null ? coords[hoveredIdx] : null;
+
+  return (
+    <div className="relative w-full">
+      {/* KPI strip */}
+      <div className="mb-5 grid grid-cols-3 gap-3">
+        <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3">
+          <p className="text-[10px] font-bold uppercase tracking-widest text-emerald-600">This Week</p>
+          <p className="mt-1 text-2xl font-bold text-emerald-700">{data.maxCount}</p>
+          <p className="text-xs text-emerald-500">tasks completed</p>
+        </div>
+        <div className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
+          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Best Day</p>
+          <p className="mt-1 text-2xl font-bold text-slate-800">{bestDay}</p>
+          <p className="text-xs text-slate-400">in a single day</p>
+        </div>
+        <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3">
+          <p className="text-[10px] font-bold uppercase tracking-widest text-blue-500">Daily Avg</p>
+          <p className="mt-1 text-2xl font-bold text-blue-700">{avgDaily}</p>
+          <p className="text-xs text-blue-400">tasks per day</p>
+        </div>
+      </div>
+
+      <svg
+        ref={svgRef}
+        viewBox={`0 0 ${SVG_W} ${SVG_H}`}
+        preserveAspectRatio="none"
+        style={{ width: "100%", height: "250px", cursor: "crosshair" }}
+        onMouseMove={handleMouseMove}
+        onMouseLeave={() => { setHoveredIdx(null); setTooltip(null); }}
+      >
+        <defs>
+          <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#10b981" stopOpacity="0.22" />
+            <stop offset="80%" stopColor="#10b981" stopOpacity="0.03" />
+            <stop offset="100%" stopColor="#10b981" stopOpacity="0" />
+          </linearGradient>
+          <linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#34d399" stopOpacity="0.9" />
+            <stop offset="100%" stopColor="#059669" stopOpacity="0.55" />
+          </linearGradient>
+        </defs>
+
+        {/* Grid lines + Y labels */}
+        {yTicks.map((tick) => {
+          const y = PAD.t + LINE_ZONE * (1 - tick / maxY);
+          return (
+            <g key={tick}>
+              <line x1={PAD.l} y1={y} x2={PAD.l + W} y2={y}
+                stroke={tick === 0 ? "#e2e8f0" : "#f1f5f9"} strokeWidth="1" />
+              <text x={PAD.l - 8} y={y + 4} textAnchor="end"
+                fill="#94a3b8" fontSize="11" fontFamily="system-ui,sans-serif">
+                {tick}
+              </text>
+            </g>
+          );
+        })}
+
+        {/* Daily completion bars */}
+        {coords.map((c, i) => {
+          if (!pts[i].daily) return null;
+          const bh = (pts[i].daily / maxDailyForBar) * maxBarH;
+          const isHov = hoveredIdx === i;
+          return (
+            <rect key={i}
+              x={c.x - barW / 2} y={barBaseY - bh}
+              width={barW} height={bh} rx="3"
+              fill={isHov ? "#10b981" : "url(#barGrad)"}
+              opacity={hoveredIdx !== null && !isHov ? 0.3 : 1}
+              style={{ transition: "opacity 0.15s, fill 0.15s" }}
+            />
+          );
+        })}
+
+        {/* Area fill */}
+        <path d={areaD} fill="url(#areaGrad)" />
+
+        {/* Smooth curve */}
+        <path d={lineD} fill="none" stroke="#10b981"
+          strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+
+        {/* Y axis */}
+        <line x1={PAD.l} y1={PAD.t} x2={PAD.l} y2={PAD.t + H} stroke="#e2e8f0" strokeWidth="1" />
+
+        {/* X labels */}
+        {coords.map((c, i) => (
+          <text key={i} x={c.x} y={SVG_H - 8}
+            textAnchor="middle" fill="#94a3b8"
+            fontSize="10" fontFamily="system-ui,sans-serif">
+            {fmtShort(c.date)}
+          </text>
+        ))}
+
+        {/* Hover crosshair */}
+        {hov && (
+          <line x1={hov.x} y1={PAD.t} x2={hov.x} y2={PAD.t + H}
+            stroke="#10b981" strokeWidth="1" strokeDasharray="4 3" opacity="0.4" />
+        )}
+
+        {/* Hover dot */}
+        {hov && (
+          <>
+            <circle cx={hov.x} cy={hov.y} r="9" fill="#10b981" opacity="0.1" />
+            <circle cx={hov.x} cy={hov.y} r="5" fill="#10b981" stroke="white" strokeWidth="2.5" />
+          </>
+        )}
+      </svg>
+
+      {/* Tooltip */}
+      {tooltip && (
+        <div
+          className="pointer-events-none absolute z-20 min-w-[160px] rounded-xl border border-slate-100 bg-white px-4 py-3 shadow-xl"
+          style={{
+            left: tooltip.x > (svgRef.current?.parentElement?.clientWidth ?? 500) * 0.68
+              ? tooltip.x - 185 : tooltip.x + 14,
+            top: Math.max(4, tooltip.y - 80),
+          }}
+        >
+          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+            {fmtFull(tooltip.date)}
+          </p>
+          <p className="mt-1.5 text-2xl font-bold text-slate-900">{tooltip.cumulative}</p>
+          <p className="text-xs font-semibold text-emerald-600">cumulative completed</p>
+          {tooltip.daily > 0 && (
+            <div className="mt-2 flex items-center gap-1.5 border-t border-slate-100 pt-2">
+              <span className="h-2 w-2 rounded-full bg-emerald-400" />
+              <p className="text-xs text-slate-500">+{tooltip.daily} on this day</p>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PieChart({ segments }) {
+  const wrapperRef = useRef(null);
+  const [hoveredLabel, setHoveredLabel] = useState(null);
+  const [tooltip, setTooltip] = useState(null);
+
+  const total = segments.reduce((sum, s) => sum + s.value, 0);
+  const cx = 85, cy = 85, outerR = 70, innerR = 42, POP = 8;
+
+  if (total === 0) {
+    return (
+      <div className="mt-4 flex justify-center">
+        <svg width="170" height="170" viewBox="0 0 170 170">
+          <circle cx={cx} cy={cy} r={outerR} fill="#f1f5f9" />
+          <circle cx={cx} cy={cy} r={innerR} fill="white" />
+          <text x={cx} y={cy + 5} textAnchor="middle" fill="#94a3b8" fontSize="12">
+            No data
+          </text>
+        </svg>
+      </div>
+    );
+  }
+
+  let angle = -Math.PI / 2;
+  const slices = segments
+    .filter((s) => s.value > 0)
+    .map((seg) => {
+      const fraction = seg.value / total;
+      const startAngle = angle;
+      const endAngle = angle + fraction * 2 * Math.PI;
+      angle = endAngle;
+      const midAngle = (startAngle + endAngle) / 2;
+
+      let path;
+      if (fraction >= 0.9999) {
+        path = [
+          `M ${cx} ${cy - outerR}`,
+          `A ${outerR} ${outerR} 0 1 1 ${cx} ${cy + outerR}`,
+          `A ${outerR} ${outerR} 0 1 1 ${cx} ${cy - outerR}`,
+          `M ${cx} ${cy - innerR}`,
+          `A ${innerR} ${innerR} 0 1 0 ${cx} ${cy + innerR}`,
+          `A ${innerR} ${innerR} 0 1 0 ${cx} ${cy - innerR}`,
+          "Z",
+        ].join(" ");
+      } else {
+        const x1 = cx + outerR * Math.cos(startAngle);
+        const y1 = cy + outerR * Math.sin(startAngle);
+        const x2 = cx + outerR * Math.cos(endAngle);
+        const y2 = cy + outerR * Math.sin(endAngle);
+        const ix1 = cx + innerR * Math.cos(endAngle);
+        const iy1 = cy + innerR * Math.sin(endAngle);
+        const ix2 = cx + innerR * Math.cos(startAngle);
+        const iy2 = cy + innerR * Math.sin(startAngle);
+        const large = fraction > 0.5 ? 1 : 0;
+        path = `M ${x1} ${y1} A ${outerR} ${outerR} 0 ${large} 1 ${x2} ${y2} L ${ix1} ${iy1} A ${innerR} ${innerR} 0 ${large} 0 ${ix2} ${iy2} Z`;
+      }
+      return { ...seg, path, fraction, midAngle };
+    });
+
+  function handleSliceEnter(e, slice) {
+    const rect = wrapperRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setHoveredLabel(slice.label);
+    setTooltip({
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top,
+      label: slice.label,
+      value: slice.value,
+      fraction: slice.fraction,
+      color: slice.color,
+    });
+  }
+
+  function handleSliceMove(e) {
+    const rect = wrapperRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setTooltip((prev) =>
+      prev ? { ...prev, x: e.clientX - rect.left, y: e.clientY - rect.top } : null
+    );
+  }
+
+  function handleSliceLeave() {
+    setHoveredLabel(null);
+    setTooltip(null);
+  }
+
+  return (
+    <div
+      ref={wrapperRef}
+      className="relative mt-4 flex flex-col items-center gap-6 sm:flex-row sm:justify-center sm:gap-8"
+    >
+      <div className="shrink-0">
+        <svg width="170" height="170" viewBox="0 0 170 170" style={{ overflow: "visible" }}>
+          {slices.map((slice) => {
+            const isHov = hoveredLabel === slice.label;
+            const dx = isHov ? (Math.cos(slice.midAngle) * POP).toFixed(2) : 0;
+            const dy = isHov ? (Math.sin(slice.midAngle) * POP).toFixed(2) : 0;
+            return (
+              <path
+                key={slice.label}
+                d={slice.path}
+                fill={slice.color}
+                stroke="white"
+                strokeWidth={isHov ? 1.5 : 2}
+                transform={`translate(${dx},${dy})`}
+                style={{ cursor: "pointer", transition: "transform 0.18s ease" }}
+                onMouseEnter={(e) => handleSliceEnter(e, slice)}
+                onMouseMove={handleSliceMove}
+                onMouseLeave={handleSliceLeave}
+              />
+            );
+          })}
+          <text x={cx} y={cy - 6} textAnchor="middle" fill="#0f172a" fontSize="22" fontWeight="700">
+            {total}
+          </text>
+          <text x={cx} y={cy + 13} textAnchor="middle" fill="#94a3b8" fontSize="11">
+            total tasks
+          </text>
+        </svg>
+      </div>
+
+      <div className="w-full max-w-[200px] space-y-1.5">
+        {segments.map((seg) => (
+          <div
+            key={seg.label}
+            className={`flex cursor-default items-center justify-between gap-3 rounded-lg px-2 py-1.5 transition-colors ${
+              hoveredLabel === seg.label ? "bg-slate-50" : ""
+            }`}
+            onMouseEnter={() => setHoveredLabel(seg.label)}
+            onMouseLeave={() => setHoveredLabel(null)}
+          >
+            <div className="flex min-w-0 items-center gap-2">
+              <span
+                className="h-2.5 w-2.5 shrink-0 rounded-sm transition-transform"
+                style={{
+                  backgroundColor: seg.color,
+                  transform: hoveredLabel === seg.label ? "scale(1.3)" : "scale(1)",
+                }}
+              />
+              <span className="truncate text-sm font-medium text-slate-600">
+                {seg.label}
+              </span>
+            </div>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <span className="text-sm font-bold text-slate-900">{seg.value}</span>
+              <span className="w-8 text-right text-xs text-slate-400">
+                {total > 0 ? `${Math.round((seg.value / total) * 100)}%` : "—"}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {tooltip && (
+        <div
+          className="pointer-events-none absolute z-20 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-lg"
+          style={{
+            left:
+              tooltip.x > (wrapperRef.current?.clientWidth ?? 300) * 0.65
+                ? tooltip.x - 148
+                : tooltip.x + 12,
+            top: Math.max(0, tooltip.y - 56),
+          }}
+        >
+          <div className="flex items-center gap-1.5">
+            <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ backgroundColor: tooltip.color }} />
+            <p className="text-xs font-semibold text-slate-700">{tooltip.label}</p>
+          </div>
+          <p className="mt-1 text-sm font-bold text-slate-900">
+            {tooltip.value}{" "}
+            <span className="text-xs font-medium text-slate-500">
+              {tooltip.value === 1 ? "task" : "tasks"}
+            </span>
+          </p>
+          <p className="text-[11px] text-slate-400">
+            {Math.round(tooltip.fraction * 100)}% of all tasks
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function DashboardPage() {
   const { user } = useAuth();
   const isTeamMember = user?.role === "team_member";
@@ -156,6 +559,48 @@ export default function DashboardPage() {
       pendingReview,
       done,
     };
+  }, [stats.tasks]);
+
+  const chartSegments = useMemo(
+    () => [
+      { label: "Todo",           value: taskSummary.todo,          color: "#64748b" },
+      { label: "In Progress",    value: taskSummary.inProgress,    color: "#3b82f6" },
+      { label: "Pending Review", value: taskSummary.pendingReview, color: "#f59e0b" },
+      { label: "Done",           value: taskSummary.done,          color: "#22c55e" },
+    ],
+    [taskSummary]
+  );
+
+  const completionChartData = useMemo(() => {
+    // Fixed 7-day window: today and the 6 preceding days
+    const allDates = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      allDates.push(d.toISOString().slice(0, 10));
+    }
+
+    const startDate = allDates[0];
+    const endDate = allDates[6];
+
+    const dateOf = (t) =>
+      (t.updated_at || t.due_date || t.created_at || "").slice(0, 10);
+
+    const byDate = {};
+    for (const task of stats.tasks.filter((t) => t.status === "done")) {
+      const d = dateOf(task);
+      if (d >= startDate && d <= endDate) byDate[d] = (byDate[d] || 0) + 1;
+    }
+
+    let cum = 0;
+    const points = allDates.map((date) => {
+      cum += byDate[date] || 0;
+      return { date, cumulative: cum };
+    });
+
+    if (cum === 0) return { points: [], maxCount: 0 };
+
+    return { points, maxCount: cum };
   }, [stats.tasks]);
 
   async function loadDashboardData() {
@@ -380,6 +825,32 @@ export default function DashboardPage() {
                   </span>
                 </div>
               </div>
+            </section>
+          </div>
+
+          <div className="mt-6 grid gap-6 lg:grid-cols-3">
+            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm lg:col-span-2">
+              <div className="mb-5">
+                <h2 className="text-lg font-bold text-slate-900">
+                  Task Completion Progress
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  7-day cumulative view with daily breakdown.
+                </p>
+              </div>
+              <CumulativeLineChart data={completionChartData} />
+            </section>
+
+            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="mb-1">
+                <h2 className="text-lg font-bold text-slate-900">
+                  Task Distribution
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Status breakdown of all tasks.
+                </p>
+              </div>
+              <PieChart segments={chartSegments} />
             </section>
           </div>
 
