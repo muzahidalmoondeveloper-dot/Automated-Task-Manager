@@ -268,6 +268,125 @@ function FiltersBar({ filters, onChange, onReset, isActive, extraFilters = null 
   );
 }
 
+// ─── Task table row (module-level so the reference is stable across renders) ──
+// Keeping this inside TasksPage would create a new function on every render,
+// making React treat it as a new component type and remount all rows — which
+// destroys the focused button and scrolls the page to the top.
+
+function TaskTableRow({
+  task,
+  reviewActionId,
+  canManageTasks,
+  isTeamMember,
+  userId,
+  onQuickStatus,
+  onApprove,
+  onAssignBack,
+  onToggleMenu,
+}) {
+  const canChange = canManageTasks || (
+    isTeamMember &&
+    task.assignee_id === userId &&
+    task.status !== "pending_review" &&
+    task.status !== "done"
+  );
+
+  const statusOpts = canManageTasks
+    ? STATUS_OPTIONS
+    : (task.status === "pending_review" || task.status === "done")
+      ? STATUS_OPTIONS.filter((o) => o.value === task.status)
+      : TEAM_MEMBER_STATUS_OPTIONS;
+
+  return (
+    <tr className="hover:bg-slate-50/70">
+      {/* Check circle */}
+      <td className="px-4 py-4 align-middle">
+        <button
+          type="button"
+          disabled={task.status === "pending_review" || (!canManageTasks && task.assignee_id !== userId)}
+          onClick={() => onQuickStatus(task, task.status === "done" ? "todo" : "done")}
+          className={
+            task.status === "done"
+              ? "flex h-5 w-5 items-center justify-center rounded-full bg-indigo-600 text-xs text-white"
+              : task.status === "pending_review"
+              ? "flex h-5 w-5 cursor-not-allowed items-center justify-center rounded-full border border-amber-400 text-xs text-amber-500"
+              : "flex h-5 w-5 items-center justify-center rounded-full border border-slate-400 text-xs text-slate-400 hover:border-slate-900 hover:text-slate-900"
+          }
+        >✓</button>
+      </td>
+
+      {/* Name */}
+      <td className="px-4 py-4 align-middle">
+        <span className={task.status === "done" ? "font-medium text-slate-400 line-through" : "font-medium text-slate-900"}>
+          {task.name}
+        </span>
+        {task.review_note && <p className="mt-1 text-xs text-amber-600">Note: {task.review_note}</p>}
+      </td>
+
+      {/* Priority */}
+      <td className="px-4 py-4 align-middle"><PriorityBadge priority={task.priority} /></td>
+
+      {/* Project */}
+      <td className="px-4 py-4 align-middle text-slate-700">{task.project?.name || "—"}</td>
+
+      {/* Assignee */}
+      <td className="px-4 py-4 align-middle text-slate-700">{task.assignee?.full_name || "—"}</td>
+
+      {/* Team */}
+      <td className="px-4 py-4 align-middle text-slate-700">{task.team?.name || "—"}</td>
+
+      {/* Start date */}
+      <td className="px-4 py-4 align-middle text-slate-700">
+        {task.start_date ? formatDate(task.start_date) : <span className="text-slate-400">—</span>}
+      </td>
+
+      {/* Due date */}
+      <td className="px-4 py-4 align-middle"><DueDateCell task={task} /></td>
+
+      {/* Status */}
+      <td className="px-4 py-4 align-middle">
+        {canChange ? (
+          <select
+            value={task.status}
+            onChange={(e) => onQuickStatus(task, e.target.value)}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 focus:border-slate-900 focus:outline-none"
+          >
+            {statusOpts.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        ) : (
+          <StatusBadge status={task.status} />
+        )}
+      </td>
+
+      {/* Actions */}
+      {canManageTasks && (
+        <td className="px-4 py-4 text-right align-middle">
+          {task.status === "pending_review" ? (
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => onApprove(task)} disabled={reviewActionId === task.id}
+                className="rounded-lg bg-green-600 px-3 py-2 text-xs font-semibold text-white hover:bg-green-700 disabled:opacity-60">
+                Approve
+              </button>
+              <button type="button" onClick={() => onAssignBack(task)} disabled={reviewActionId === task.id}
+                className="rounded-lg border border-amber-300 px-3 py-2 text-xs font-semibold text-amber-700 hover:bg-amber-50 disabled:opacity-60">
+                Assign Back
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={(e) => onToggleMenu(e, task.id)}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"
+            >
+              <ThreeDotsIcon />
+            </button>
+          )}
+        </td>
+      )}
+    </tr>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function TasksPage() {
@@ -314,6 +433,7 @@ export default function TasksPage() {
   const [isSubmitting,   setIsSubmitting]   = useState(false);
   const [formError,      setFormError]      = useState("");
   const [openMenuId,     setOpenMenuId]     = useState(null);
+  const [menuPos,        setMenuPos]        = useState(null);
   const [reviewActionId, setReviewActionId] = useState(null);
   const [celebrationData,setCelebrationData]= useState(null);
 
@@ -633,6 +753,32 @@ export default function TasksPage() {
     allFilters.assignee !== "all" || allFilters.project !== "all" || allFilters.team !== "all" ||
     allFilters.overdue || allFilters.dueDateFrom || allFilters.dueDateTo;
 
+  // ─── Menu helpers ────────────────────────────────────────────────────────────
+
+  function handleMenuToggle(e, taskId) {
+    e.stopPropagation();
+    if (openMenuId === taskId) {
+      setOpenMenuId(null);
+      setMenuPos(null);
+    } else {
+      const rect = e.currentTarget.getBoundingClientRect();
+      setMenuPos({ top: rect.bottom + 4, right: window.innerWidth - rect.right });
+      setOpenMenuId(taskId);
+    }
+  }
+
+  const openMenuTask = useMemo(() => {
+    if (!openMenuId) return null;
+    return myTasks.find((t) => t.id === openMenuId) || allTasks.find((t) => t.id === openMenuId) || null;
+  }, [openMenuId, myTasks, allTasks]);
+
+  useEffect(() => {
+    if (!openMenuId) return;
+    const close = () => { setOpenMenuId(null); setMenuPos(null); };
+    document.addEventListener("click", close);
+    return () => document.removeEventListener("click", close);
+  }, [openMenuId]);
+
   // ─── Tabs ────────────────────────────────────────────────────────────────────
 
   const primaryTabs = [
@@ -645,110 +791,6 @@ export default function TasksPage() {
     { key: "board",    label: "Board"    },
     { key: "calendar", label: "Calendar" },
   ];
-
-  // ─── Shared task table row ────────────────────────────────────────────────────
-
-  function TaskTableRow({ task }) {
-    return (
-      <tr key={task.id} className="hover:bg-slate-50/70">
-        {/* Check circle */}
-        <td className="px-4 py-4 align-middle">
-          <button
-            type="button"
-            disabled={task.status === "pending_review" || (!canManageTasks && task.assignee_id !== user?.id)}
-            onClick={() => quickStatusUpdate(task, task.status === "done" ? "todo" : "done")}
-            className={
-              task.status === "done"
-                ? "flex h-5 w-5 items-center justify-center rounded-full bg-indigo-600 text-xs text-white"
-                : task.status === "pending_review"
-                ? "flex h-5 w-5 cursor-not-allowed items-center justify-center rounded-full border border-amber-400 text-xs text-amber-500"
-                : "flex h-5 w-5 items-center justify-center rounded-full border border-slate-400 text-xs text-slate-400 hover:border-slate-900 hover:text-slate-900"
-            }
-          >✓</button>
-        </td>
-
-        {/* Name */}
-        <td className="px-4 py-4 align-middle">
-          <span className={task.status === "done" ? "font-medium text-slate-400 line-through" : "font-medium text-slate-900"}>
-            {task.name}
-          </span>
-          {task.review_note && <p className="mt-1 text-xs text-amber-600">Note: {task.review_note}</p>}
-        </td>
-
-        {/* Priority */}
-        <td className="px-4 py-4 align-middle"><PriorityBadge priority={task.priority} /></td>
-
-        {/* Project */}
-        <td className="px-4 py-4 align-middle text-slate-700">{task.project?.name || "—"}</td>
-
-        {/* Assignee */}
-        <td className="px-4 py-4 align-middle text-slate-700">{task.assignee?.full_name || "—"}</td>
-
-        {/* Team */}
-        <td className="px-4 py-4 align-middle text-slate-700">{task.team?.name || "—"}</td>
-
-        {/* Start date */}
-        <td className="px-4 py-4 align-middle text-slate-700">
-          {task.start_date ? formatDate(task.start_date) : <span className="text-slate-400">—</span>}
-        </td>
-
-        {/* Due date */}
-        <td className="px-4 py-4 align-middle"><DueDateCell task={task} /></td>
-
-        {/* Status */}
-        <td className="px-4 py-4 align-middle">
-          {canChangeStatus(task) ? (
-            <select
-              value={task.status}
-              onChange={(e) => quickStatusUpdate(task, e.target.value)}
-              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 focus:border-slate-900 focus:outline-none"
-            >
-              {getStatusOptionsForTask(task).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
-          ) : (
-            <StatusBadge status={task.status} />
-          )}
-        </td>
-
-        {/* Actions */}
-        {canManageTasks && (
-          <td className="relative px-4 py-4 text-right align-middle">
-            {task.status === "pending_review" ? (
-              <div className="flex justify-end gap-2">
-                <button type="button" onClick={() => approveTask(task)} disabled={reviewActionId === task.id}
-                  className="rounded-lg bg-green-600 px-3 py-2 text-xs font-semibold text-white hover:bg-green-700 disabled:opacity-60">
-                  Approve
-                </button>
-                <button type="button" onClick={() => assignBackTask(task)} disabled={reviewActionId === task.id}
-                  className="rounded-lg border border-amber-300 px-3 py-2 text-xs font-semibold text-amber-700 hover:bg-amber-50 disabled:opacity-60">
-                  Assign Back
-                </button>
-              </div>
-            ) : (
-              <>
-                <button type="button" onClick={() => setOpenMenuId((p) => (p === task.id ? null : task.id))}
-                  className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100">
-                  <ThreeDotsIcon />
-                </button>
-                {openMenuId === task.id && (
-                  <div className="absolute right-4 top-12 z-20 w-36 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
-                    <button type="button" onClick={() => { setOpenMenuId(null); handleEdit(task); }}
-                      className="block w-full px-4 py-2.5 text-left text-sm font-medium text-slate-700 hover:bg-slate-50">
-                      Edit
-                    </button>
-                    <button type="button" onClick={() => { setOpenMenuId(null); handleDelete(task); }}
-                      className="block w-full px-4 py-2.5 text-left text-sm font-medium text-red-600 hover:bg-red-50">
-                      Delete
-                    </button>
-                  </div>
-                )}
-              </>
-            )}
-          </td>
-        )}
-      </tr>
-    );
-  }
 
   // ─── Render ──────────────────────────────────────────────────────────────────
 
@@ -891,7 +933,7 @@ export default function TasksPage() {
                                   <StatusBadge status={task.status} />
                                 )}
                               </td>
-                              <td className="relative px-4 py-4 text-right align-middle">
+                              <td className="px-4 py-4 text-right align-middle">
                                 {canManageTasks && (
                                   task.status === "pending_review" ? (
                                     <div className="flex justify-end gap-2">
@@ -905,24 +947,10 @@ export default function TasksPage() {
                                       </button>
                                     </div>
                                   ) : (
-                                    <>
-                                      <button type="button" onClick={() => setOpenMenuId((p) => (p === task.id ? null : task.id))}
-                                        className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100">
-                                        <ThreeDotsIcon />
-                                      </button>
-                                      {openMenuId === task.id && (
-                                        <div className="absolute right-4 top-12 z-20 w-36 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
-                                          <button type="button" onClick={() => { setOpenMenuId(null); handleEdit(task); }}
-                                            className="block w-full px-4 py-2.5 text-left text-sm font-medium text-slate-700 hover:bg-slate-50">
-                                            Edit
-                                          </button>
-                                          <button type="button" onClick={() => { setOpenMenuId(null); handleDelete(task); }}
-                                            className="block w-full px-4 py-2.5 text-left text-sm font-medium text-red-600 hover:bg-red-50">
-                                            Delete
-                                          </button>
-                                        </div>
-                                      )}
-                                    </>
+                                    <button type="button" onClick={(e) => handleMenuToggle(e, task.id)}
+                                      className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100">
+                                      <ThreeDotsIcon />
+                                    </button>
                                   )
                                 )}
                               </td>
@@ -1176,7 +1204,18 @@ export default function TasksPage() {
                         </thead>
                         <tbody className="divide-y divide-slate-200">
                           {filteredAllTasks.length ? filteredAllTasks.map((task) => (
-                            <TaskTableRow key={task.id} task={task} />
+                            <TaskTableRow
+                              key={task.id}
+                              task={task}
+                              reviewActionId={reviewActionId}
+                              canManageTasks={canManageTasks}
+                              isTeamMember={isTeamMember}
+                              userId={user?.id}
+                              onQuickStatus={quickStatusUpdate}
+                              onApprove={approveTask}
+                              onAssignBack={assignBackTask}
+                              onToggleMenu={handleMenuToggle}
+                            />
                           )) : (
                             <tr>
                               <td colSpan={10}>
@@ -1339,6 +1378,24 @@ export default function TasksPage() {
             </section>
           )}
         </>
+      )}
+
+      {/* Fixed-position three-dot dropdown — escapes overflow:hidden clipping */}
+      {openMenuTask && menuPos && (
+        <div
+          className="fixed z-50 w-36 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg"
+          style={{ top: menuPos.top, right: menuPos.right }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button type="button" onClick={() => { setMenuPos(null); handleEdit(openMenuTask); }}
+            className="block w-full px-4 py-2.5 text-left text-sm font-medium text-slate-700 hover:bg-slate-50">
+            Edit
+          </button>
+          <button type="button" onClick={() => { setMenuPos(null); handleDelete(openMenuTask); }}
+            className="block w-full px-4 py-2.5 text-left text-sm font-medium text-red-600 hover:bg-red-50">
+            Delete
+          </button>
+        </div>
       )}
 
       {/* Celebration overlay */}
