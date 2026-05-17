@@ -1,6 +1,12 @@
 from functools import lru_cache
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Resolve the .env file path relative to this file (backend/app/core/config.py)
+# so it is found correctly regardless of the working directory from which the
+# FastAPI server or the Celery worker process is launched.
+_ENV_FILE = Path(__file__).resolve().parent.parent.parent / ".env"
 
 
 class Settings(BaseSettings):
@@ -88,7 +94,7 @@ class Settings(BaseSettings):
     CELERY_RESULT_BACKEND: str | None = None
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(_ENV_FILE),
         env_file_encoding="utf-8",
         case_sensitive=True,
     )

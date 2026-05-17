@@ -42,10 +42,18 @@ async def _fetch_task_and_users(task_id: int, *user_ids: int):
 
 @celery_app.task(bind=True, name="app.worker.tasks.email_tasks.send_task_assigned_email", **_RETRY)
 def send_task_assigned_email(self, task_id: int, assignee_id: int, assigned_by_id: int):
+    logger.info(
+        "TASK START send_task_assigned_email | task_id=%s | assignee_id=%s | assigned_by_id=%s",
+        task_id, assignee_id, assigned_by_id,
+    )
     asyncio.run(_do_send_task_assigned(task_id, assignee_id, assigned_by_id))
 
 
 async def _do_send_task_assigned(task_id: int, assignee_id: int, assigned_by_id: int):
+    logger.info(
+        "DO send_task_assigned | task_id=%s | assignee_id=%s | assigned_by_id=%s",
+        task_id, assignee_id, assigned_by_id,
+    )
     async with WorkerSession() as db:
         task = await TaskRepository(db).get_by_id(task_id)
         user_repo = UserRepository(db)
@@ -59,6 +67,10 @@ async def _do_send_task_assigned(task_id: int, assignee_id: int, assigned_by_id:
             )
             return
 
+        logger.info(
+            "send_task_assigned: sending email | task=%s | to=%s | by=%s",
+            task_id, assignee.email, assigned_by.email,
+        )
         await email_service.send_task_assigned(
             db, task=task, assignee=assignee, assigned_by=assigned_by,
         )
@@ -74,6 +86,10 @@ def send_due_date_updated_email(
     updated_by_id: int,
     old_due_date_str: str | None,   # "YYYY-MM-DD" or None
 ):
+    logger.info(
+        "TASK START send_due_date_updated_email | task_id=%s | assignee_id=%s",
+        task_id, assignee_id,
+    )
     asyncio.run(_do_send_due_date_updated(task_id, assignee_id, updated_by_id, old_due_date_str))
 
 
@@ -113,6 +129,10 @@ async def _do_send_due_date_updated(
 
 @celery_app.task(bind=True, name="app.worker.tasks.email_tasks.send_task_sent_for_review_email", **_RETRY)
 def send_task_sent_for_review_email(self, task_id: int, submitter_id: int, reviewer_id: int):
+    logger.info(
+        "TASK START send_task_sent_for_review_email | task_id=%s | submitter_id=%s | reviewer_id=%s",
+        task_id, submitter_id, reviewer_id,
+    )
     asyncio.run(_do_send_task_sent_for_review(task_id, submitter_id, reviewer_id))
 
 
@@ -139,6 +159,10 @@ async def _do_send_task_sent_for_review(task_id: int, submitter_id: int, reviewe
 
 @celery_app.task(bind=True, name="app.worker.tasks.email_tasks.send_task_approved_email", **_RETRY)
 def send_task_approved_email(self, task_id: int, recipient_id: int, approved_by_id: int):
+    logger.info(
+        "TASK START send_task_approved_email | task_id=%s | recipient_id=%s | approved_by_id=%s",
+        task_id, recipient_id, approved_by_id,
+    )
     asyncio.run(_do_send_task_approved(task_id, recipient_id, approved_by_id))
 
 
@@ -165,6 +189,10 @@ async def _do_send_task_approved(task_id: int, recipient_id: int, approved_by_id
 
 @celery_app.task(bind=True, name="app.worker.tasks.email_tasks.send_task_assigned_back_email", **_RETRY)
 def send_task_assigned_back_email(self, task_id: int, assignee_id: int, manager_id: int, note: str):
+    logger.info(
+        "TASK START send_task_assigned_back_email | task_id=%s | assignee_id=%s | manager_id=%s",
+        task_id, assignee_id, manager_id,
+    )
     asyncio.run(_do_send_task_assigned_back(task_id, assignee_id, manager_id, note))
 
 
@@ -197,6 +225,10 @@ def send_due_date_reminder_email(
     window: str,        # "today" | "tomorrow"
     role_label: str,    # "assignee" | "manager"
 ):
+    logger.info(
+        "TASK START send_due_date_reminder_email | task_id=%s | recipient_id=%s | window=%s | role=%s",
+        task_id, recipient_id, window, role_label,
+    )
     asyncio.run(_do_send_due_date_reminder(task_id, recipient_id, window, role_label))
 
 

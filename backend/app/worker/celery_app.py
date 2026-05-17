@@ -47,13 +47,27 @@ celery_app.conf.update(
     # Result TTL: keep results for 24 hours then auto-delete.
     result_expires=86400,
 
-    # Route tasks to named queues.
-    task_routes={
-        "app.worker.tasks.email_tasks.*": {"queue": "emails"},
-        "app.worker.tasks.sync_tasks.*": {"queue": "sync"},
-        "app.worker.tasks.notification_tasks.*": {"queue": "notifications"},
-    },
     task_default_queue="default",
+
+    # Windows compatibility: the default prefork pool uses Unix fork() which
+    # does not exist on Windows and causes WinError 6 / billiard crashes.
+    # "solo" runs tasks in the main thread sequentially — safe on all platforms.
+    # On Linux/Mac in production you can override this via the -P flag:
+    #   celery -A app.worker.celery_app worker --pool=prefork
+    worker_pool="solo",
+)
+
+
+# ─── Startup diagnostic ───────────────────────────────────────────────────────
+# Logged once when the module is imported (worker start or FastAPI start).
+# Never logs the password — only enough to confirm the right .env was loaded.
+logger.info(
+    "SMTP config loaded | host=%s | port=%s | username=%s | from_email=%s | env_file=%s",
+    settings.SMTP_HOST,
+    settings.SMTP_PORT,
+    settings.SMTP_USERNAME,
+    settings.SMTP_FROM_EMAIL,
+    settings.model_config.get("env_file", "unknown"),
 )
 
 
