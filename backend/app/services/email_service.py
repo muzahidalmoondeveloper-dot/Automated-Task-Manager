@@ -235,12 +235,24 @@ class EmailService:
         event_type: str = "unknown",
     ) -> tuple[bool, str]:
         """Send via SMTP. Returns (success, error_message)."""
+        # Always log the resolved SMTP config so we can confirm the worker
+        # loaded the right .env — never log the password.
+        logger.info(
+            "SMTP attempt | event=%s | host=%s | port=%s | from=%s | to=%s",
+            event_type, settings.SMTP_HOST, settings.SMTP_PORT,
+            settings.SMTP_FROM_EMAIL, to_email,
+        )
+
         if not settings.SMTP_HOST or not settings.SMTP_USERNAME or not settings.SMTP_PASSWORD:
-            logger.info(
-                "[DEV EMAIL] event=%s | to=%s | subject=%s",
+            logger.warning(
+                "SMTP credentials not configured — logging to console only"
+                " | event=%s | to=%s | subject=%s"
+                " | SMTP_HOST=%r | SMTP_USERNAME=%r | SMTP_PASSWORD_set=%s",
                 event_type, to_email, subject,
+                settings.SMTP_HOST, settings.SMTP_USERNAME,
+                bool(settings.SMTP_PASSWORD),
             )
-            return True, ""
+            return False, "SMTP credentials not configured"
 
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
@@ -254,13 +266,16 @@ class EmailService:
                 server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
                 server.send_message(msg)
             logger.info(
-                "SMTP sent | event=%s | to=%s | subject=%s",
-                event_type, to_email, subject,
+                "SMTP sent | event=%s | host=%s | to=%s | subject=%s",
+                event_type, settings.SMTP_HOST, to_email, subject,
             )
             return True, ""
         except Exception as exc:
             err = str(exc)
-            logger.error("SMTP error | event=%s | to=%s | %s", event_type, to_email, err)
+            logger.exception(
+                "SMTP error | event=%s | host=%s | port=%s | to=%s",
+                event_type, settings.SMTP_HOST, settings.SMTP_PORT, to_email,
+            )
             return False, err
 
     # ═══════════════════════════════════════════════════════════════════════════

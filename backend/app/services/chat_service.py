@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.notification import Notification
 from app.models.user import User
 from app.repositories.chat_repository import ChatRepository
 from app.repositories.task_repository import TaskRepository
@@ -19,6 +20,7 @@ from app.core.roles import TEAM_MEMBER
 from app.schemas.chat import ChatAction, ChatMessageResponse
 from app.schemas.task import TaskCreate, TaskUpdate
 from app.services.llm import get_llm_provider
+from app.worker.tasks.email_tasks import send_task_assigned_email
 
 if TYPE_CHECKING:
     from app.models.chat import ChatMessage, ChatSession
@@ -459,6 +461,7 @@ class ChatService:
                 status=raw.get("status", "todo"),
             )
             task = await self._task_repo.create(payload, created_by_id=user.id)
+            await self._notify_assigned(task, assigned_by=user)
             created.append(task)
             actions.append(
                 ChatAction(
@@ -605,7 +608,12 @@ class ChatService:
                 [],
             )
 
+        old_assignee_id = task.assignee_id
         updated = await self._task_repo.update(task, TaskUpdate(**update_payload))
+
+        if update_payload.get("assignee_id") and update_payload["assignee_id"] != old_assignee_id:
+            await self._notify_assigned(updated, assigned_by=user)
+
         changes = ", ".join(f"{k}={v}" for k, v in update_payload.items())
         return f'Updated task "{updated.name}": {changes}.', [
             ChatAction(
@@ -1196,6 +1204,58 @@ class ChatService:
             temperature=0.4,
         )
         return result.text, []
+
+    # ─── Notification + email helpers ────────────────────────────────────────
+
+    async def _notify_assigned(self, task, assigned_by: User) -> None:
+        """Create an in-app notification and enqueue an assignment email."""
+        # Capture plain integer IDs before any commits to avoid ORM identity-map
+        # issues — the Task model has multiple FK columns pointing to User
+        # (assignee_id, created_by_id, completed_by_id, reviewed_by_id) and
+        # SQLAlchemy can resolve get_by_id() to the wrong cached object.
+        task_id: int = task.id
+        task_name: str = task.name
+        assignee_id: int | None = task.assignee_id
+        assigned_by_id: int = assigned_by.id
+
+        if not assignee_id or assignee_id == assigned_by_id:
+            return
+
+        self._db.add(
+            Notification(
+                user_id=assignee_id,
+                task_id=task_id,
+                title="New task assigned to you",
+                message=f"You have been assigned a new task: '{task_name}'.",
+                type="task_assigned",
+            )
+        )
+        await self._db.commit()
+
+        # Use a fresh UserRepository call with the captured plain integer ID so
+        # the session identity map cannot return a stale / wrong User object.
+        assignee = await self._user_repo.get_by_id(assignee_id)
+        if assignee:
+            logger.info(
+                "Enqueuing task_assigned email | task_id=%s | assignee_id=%s"
+                " | assignee_email=%s | assigned_by_id=%s",
+                task_id, assignee.id, assignee.email, assigned_by_id,
+            )
+            self._enqueue_email(send_task_assigned_email, task_id, assignee.id, assigned_by_id)
+        else:
+            logger.warning(
+                "task_assigned email skipped — assignee not found in DB"
+                " | task_id=%s | assignee_id=%s",
+                task_id, assignee_id,
+            )
+
+    @staticmethod
+    def _enqueue_email(task_fn, *args, **kwargs) -> None:
+        try:
+            task_fn.delay(*args, **kwargs)
+            logger.info("Enqueued email task %s | args=%s", task_fn.name, args)
+        except Exception as exc:
+            logger.error("Failed to enqueue email task %s | args=%s | error=%s", task_fn.name, args, exc)
 
     # ─── Helpers ──────────────────────────────────────────────────────────────
 
