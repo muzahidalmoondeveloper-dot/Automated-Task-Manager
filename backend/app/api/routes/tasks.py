@@ -29,7 +29,13 @@ from app.schemas.task import (
 )
 from app.schemas.team import TeamRead
 from app.schemas.user import UserRead
-from app.services.email_service import email_service
+from app.worker.tasks.email_tasks import (
+    send_due_date_updated_email,
+    send_task_approved_email,
+    send_task_assigned_back_email,
+    send_task_assigned_email,
+    send_task_sent_for_review_email,
+)
 
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
 
@@ -157,12 +163,12 @@ def _apply_task_filters(
     return result
 
 
-async def _fire_email(coro) -> None:
-    """Await an email coroutine, swallowing all exceptions so task ops are never blocked."""
+def _enqueue_email(task_fn, *args, **kwargs) -> None:
+    """Enqueue a Celery email task, logging if Redis is unavailable."""
     try:
-        await coro
+        task_fn.delay(*args, **kwargs)
     except Exception as exc:
-        logger.warning("Email notification suppressed: %s", exc)
+        logger.error("Failed to enqueue email task %s: %s", task_fn.name, exc)
 
 
 # ─── My Tasks (all roles) ─────────────────────────────────────────────────────
@@ -291,13 +297,9 @@ async def create_task(
                 "Triggering task_assigned email | task_id=%s | assigner_id=%s | assignee_id=%s | recipient=%s",
                 task.id, current_user.id, assignee_user.id, assignee_user.email,
             )
-            await _fire_email(
-                email_service.send_task_assigned(
-                    db,
-                    task=task,
-                    assignee=assignee_user,   # ← the person receiving the task
-                    assigned_by=current_user,  # ← the person who created it
-                )
+            _enqueue_email(
+                send_task_assigned_email,
+                task.id, assignee_user.id, current_user.id,
             )
         else:
             logger.warning(
@@ -486,13 +488,9 @@ async def update_task_status(
                     "Triggering task_sent_for_review email | task_id=%s | submitter_id=%s | reviewer_id=%s | recipient=%s",
                     updated_task.id, current_user.id, reviewer.id, reviewer.email,
                 )
-                await _fire_email(
-                    email_service.send_task_sent_for_review(
-                        db,
-                        task=updated_task,
-                        assignee=current_user,
-                        manager=reviewer,
-                    )
+                _enqueue_email(
+                    send_task_sent_for_review_email,
+                    updated_task.id, current_user.id, reviewer.id,
                 )
             else:
                 logger.warning(
@@ -576,13 +574,9 @@ async def approve_task(
                 "Triggering task_approved email | task_id=%s | approver_id=%s | recipient_id=%s | recipient=%s",
                 updated_task.id, current_user.id, recipient.id, recipient.email,
             )
-            await _fire_email(
-                email_service.send_task_approved(
-                    db,
-                    task=updated_task,
-                    assignee=recipient,        # ← the person who completed/submitted the task
-                    approved_by=current_user,  # ← the manager who approved
-                )
+            _enqueue_email(
+                send_task_approved_email,
+                updated_task.id, recipient.id, current_user.id,
             )
         else:
             logger.warning(
@@ -638,14 +632,9 @@ async def assign_task_back(
             "Triggering task_assigned_back email | task_id=%s | manager_id=%s | assignee_id=%s | recipient=%s",
             updated_task.id, current_user.id, updated_task.assignee.id, updated_task.assignee.email,
         )
-        await _fire_email(
-            email_service.send_task_assigned_back(
-                db,
-                task=updated_task,
-                assignee=updated_task.assignee,  # ← the assignee getting the feedback
-                manager=current_user,             # ← the manager who rejected
-                note=note,
-            )
+        _enqueue_email(
+            send_task_assigned_back_email,
+            updated_task.id, updated_task.assignee.id, current_user.id, note,
         )
     else:
         logger.warning(
@@ -715,13 +704,9 @@ async def update_task(
                 "Triggering task_assigned email (reassign) | task_id=%s | assigner_id=%s | assignee_id=%s | recipient=%s",
                 updated_task.id, current_user.id, new_assignee_user.id, new_assignee_user.email,
             )
-            await _fire_email(
-                email_service.send_task_assigned(
-                    db,
-                    task=updated_task,
-                    assignee=new_assignee_user,   # ← the NEW assignee receiving the task
-                    assigned_by=current_user,      # ← the manager who reassigned
-                )
+            _enqueue_email(
+                send_task_assigned_email,
+                updated_task.id, new_assignee_user.id, current_user.id,
             )
         else:
             logger.warning(
@@ -735,14 +720,12 @@ async def update_task(
         and old_due_date != updated_task.due_date
         and updated_task.assignee
     ):
-        await _fire_email(
-            email_service.send_due_date_updated(
-                db,
-                task=updated_task,
-                assignee=updated_task.assignee,
-                updated_by=current_user,
-                old_due_date=old_due_date,
-            )
+        _enqueue_email(
+            send_due_date_updated_email,
+            updated_task.id,
+            updated_task.assignee.id,
+            current_user.id,
+            str(old_due_date) if old_due_date else None,
         )
 
     return serialize_task(updated_task)
