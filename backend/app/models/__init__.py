@@ -10,3 +10,4 @@ from app.models.integration import (
     CalendarEvent,
     MeetingTranscript,
 )
+from app.models.email_notification_log import EmailNotificationLog

@@ -866,6 +866,19 @@ class ChatService:
             if not tasks:
                 return f"**{target_label}** has no assigned tasks.", []
 
+            if status:
+                filtered = [t for t in tasks if t.status == status]
+                if not filtered:
+                    return f"**{target_label}** has no tasks with status **{status}**.", []
+                lines = [
+                    f"• [{t.id}] {t.name} — due {t.due_date or 'no date'}"
+                    for t in filtered[:25]
+                ]
+                return (
+                    f"**{target_label}** has **{len(filtered)} {status.replace('_', ' ')} task(s)**:\n\n"
+                    + "\n".join(lines)
+                ), []
+
             counts = {s: sum(1 for t in tasks if t.status == s) for s in ["todo", "in_progress", "pending_review", "done"]}
             lines = [
                 f"• [{t.id}] {t.name} — {t.status} — due {t.due_date or 'no date'}"
