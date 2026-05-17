@@ -1,221 +1,104 @@
+"""
+Automation scheduler — thin enqueuer only.
+
+The APScheduler jobs in this module perform only lightweight database queries
+(e.g. finding users with active Microsoft accounts) and then enqueue Celery
+tasks.  No email sending, no external API calls, no AI inference runs here.
+All heavy work is executed by the Celery worker process.
+"""
 import logging
-from datetime import date, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 
 from app.core.database import AsyncSessionLocal
-from app.models.notification import Notification
-from app.models.task import Task
-from app.models.team import Team
 from app.models.user import User
 from app.repositories.integration_repository import IntegrationRepository
-from app.services.automation_tasks import (
-    sync_microsoft_data_for_user,
-    analyze_yesterday_sources_for_user,
-)
-from app.services.email_service import email_service
 
 logger = logging.getLogger("automation_scheduler")
 
 scheduler = AsyncIOScheduler()
 
 
-# ─── In-app due-date notifications ────────────────────────────────────────────
+# ─── Helpers ──────────────────────────────────────────────────────────────────
+
+def _enqueue(task_fn, *args, **kwargs) -> bool:
+    """Call .delay() on a Celery task, logging if Redis is unavailable."""
+    try:
+        task_fn.delay(*args, **kwargs)
+        return True
+    except Exception as exc:
+        logger.error("Failed to enqueue %s: %s", task_fn.name, exc)
+        return False
+
+
+# ─── Scheduler job: in-app due-date notifications ────────────────────────────
 
 async def run_due_date_notifications():
-    """Send due-soon (≤3 days) and overdue in-app notifications, deduplicating by type per task."""
-    today = date.today()
-    due_soon_cutoff = today + timedelta(days=3)
+    """Enqueue the Celery task that creates in-app due / overdue notifications."""
+    from app.worker.tasks.notification_tasks import run_due_date_notifications_task
 
-    logger.info("========== DUE DATE NOTIFICATIONS START ==========")
-
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(
-            select(Task)
-            .where(Task.assignee_id.isnot(None))
-            .where(Task.due_date.isnot(None))
-            .where(Task.status.notin_(["done", "pending_review"]))
-        )
-        tasks = list(result.scalars().all())
-
-        logger.info("Tasks checked for due dates: %s", len(tasks))
-
-        for task in tasks:
-            if task.due_date < today:
-                notify_type = "task_overdue"
-                title = "Task overdue"
-                message = f"Your task '{task.name}' is overdue (was due {task.due_date})."
-            elif today <= task.due_date <= due_soon_cutoff:
-                notify_type = "task_due_soon"
-                title = "Task due soon"
-                message = f"Your task '{task.name}' is due on {task.due_date}."
-            else:
-                continue
-
-            # Deduplicate: skip if an unread notification of this type already exists
-            existing = await db.execute(
-                select(Notification).where(
-                    Notification.user_id == task.assignee_id,
-                    Notification.task_id == task.id,
-                    Notification.type == notify_type,
-                    Notification.is_read == False,  # noqa: E712
-                )
-            )
-            if existing.scalar_one_or_none() is not None:
-                continue
-
-            db.add(
-                Notification(
-                    user_id=task.assignee_id,
-                    task_id=task.id,
-                    title=title,
-                    message=message,
-                    type=notify_type,
-                )
-            )
-            logger.info(
-                "Queued %s notification for user_id=%s task_id=%s",
-                notify_type, task.assignee_id, task.id,
-            )
-
-        await db.commit()
-
-    logger.info("========== DUE DATE NOTIFICATIONS END ==========")
+    logger.info("Scheduler: enqueuing run_due_date_notifications_task")
+    _enqueue(run_due_date_notifications_task)
 
 
-# ─── Due-date email reminders ─────────────────────────────────────────────────
+# ─── Scheduler job: due-date email reminders ─────────────────────────────────
 
 async def run_due_date_email_reminders():
-    """
-    Daily job: email the assignee and team manager for tasks due today or tomorrow.
+    """Enqueue the Celery task that emails assignees and managers for tasks due today/tomorrow."""
+    from app.worker.tasks.notification_tasks import run_due_date_email_reminders_task
 
-    Skips tasks that are already done. Uses deduplication in EmailNotificationLog
-    to avoid sending the same reminder twice per due-date window.
-    """
-    today = date.today()
-    tomorrow = today + timedelta(days=1)
-
-    logger.info("========== DUE DATE EMAIL REMINDERS START ==========")
-
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(
-            select(Task)
-            .where(Task.assignee_id.isnot(None))
-            .where(Task.due_date.isnot(None))
-            .where(Task.status != "done")
-            .where(Task.due_date.in_([today, tomorrow]))
-            .options(
-                selectinload(Task.assignee),
-                selectinload(Task.project),
-                selectinload(Task.team),
-            )
-        )
-        tasks = list(result.scalars().all())
-
-        logger.info("Tasks due today/tomorrow requiring reminders: %s", len(tasks))
-
-        for task in tasks:
-            window = "today" if task.due_date == today else "tomorrow"
-
-            # ── Email assignee ──────────────────────────────────────
-            if task.assignee:
-                await email_service.send_due_date_reminder(
-                    db,
-                    task=task,
-                    recipient=task.assignee,
-                    window=window,
-                    role_label="assignee",
-                )
-
-            # ── Email team manager ──────────────────────────────────
-            if task.team_id:
-                team_result = await db.execute(
-                    select(Team).where(Team.id == task.team_id)
-                )
-                team = team_result.scalar_one_or_none()
-
-                if team and team.team_manager_id:
-                    manager_result = await db.execute(
-                        select(User).where(User.id == team.team_manager_id)
-                    )
-                    manager = manager_result.scalar_one_or_none()
-
-                    if manager and (not task.assignee or manager.id != task.assignee_id):
-                        await email_service.send_due_date_reminder(
-                            db,
-                            task=task,
-                            recipient=manager,
-                            window=window,
-                            role_label="manager",
-                        )
-
-    logger.info("========== DUE DATE EMAIL REMINDERS END ==========")
+    logger.info("Scheduler: enqueuing run_due_date_email_reminders_task")
+    _enqueue(run_due_date_email_reminders_task)
 
 
-# ─── Daily AI task sync ───────────────────────────────────────────────────────
+# ─── Scheduler job: daily AI task sync ───────────────────────────────────────
 
 async def run_daily_ai_task_sync():
-    logger.info("========== DAILY AI TASK SYNC START ==========")
+    """
+    For each active user with a Microsoft account, enqueue a Celery sync task.
+
+    The Celery sync task fetches emails / calendar / transcripts and then
+    auto-chains the AI extraction task once the sync is done.
+    """
+    from app.worker.tasks.sync_tasks import sync_microsoft_data_task
+
+    logger.info("Scheduler: enqueuing Microsoft sync jobs")
 
     async with AsyncSessionLocal() as db:
         result = await db.execute(
             select(User).where(User.is_active.is_(True))
         )
-
         users = list(result.scalars().all())
 
         logger.info("Active users found: %s", len(users))
 
+        enqueued = 0
         for user in users:
             try:
                 repository = IntegrationRepository(db)
-
                 microsoft_accounts = await repository.list_accounts_by_provider(
-                    user.id,
-                    "microsoft",
+                    user.id, "microsoft",
                 )
 
                 if not microsoft_accounts:
-                    logger.info(
-                        "Skipping user %s. No Microsoft account connected.",
-                        user.email,
-                    )
+                    logger.info("Skipping user %s — no Microsoft account.", user.email)
                     continue
 
-                logger.info("Running daily sync for user: %s", user.email)
-
-                sync_result = await sync_microsoft_data_for_user(
-                    db=db,
-                    user=user,
-                )
-
-                logger.info(
-                    "Microsoft sync result for %s: %s",
-                    user.email,
-                    sync_result,
-                )
-
-                analysis_result = await analyze_yesterday_sources_for_user(
-                    db=db,
-                    user=user,
-                )
-
-                logger.info(
-                    "AI analysis result for %s: %s",
-                    user.email,
-                    analysis_result,
-                )
+                if _enqueue(sync_microsoft_data_task, user.id):
+                    enqueued += 1
+                    logger.info(
+                        "Enqueued sync_microsoft_data_task | user_id=%s email=%s",
+                        user.id, user.email,
+                    )
 
             except Exception as exc:
                 logger.exception(
-                    "Daily sync failed for user %s: %s",
-                    user.email,
-                    exc,
+                    "Failed to enqueue sync for user %s: %s",
+                    user.email, exc,
                 )
 
-    logger.info("========== DAILY AI TASK SYNC END ==========")
+    logger.info("Scheduler: enqueued %s Microsoft sync job(s)", enqueued)
 
 
 # ─── Scheduler setup ─────────────────────────────────────────────────────────
@@ -247,7 +130,7 @@ def start_scheduler():
         coalesce=True,
     )
 
-    # Due-date EMAIL reminders — runs daily at 08:00
+    # Due-date EMAIL reminders — runs daily at 08:00 UTC
     scheduler.add_job(
         run_due_date_email_reminders,
         trigger="cron",
@@ -259,7 +142,7 @@ def start_scheduler():
         coalesce=True,
     )
 
-    # PRODUCTION alternatives (uncomment to replace the interval jobs above):
+    # PRODUCTION alternative (uncomment to replace the interval job above):
     # scheduler.add_job(
     #     run_daily_ai_task_sync,
     #     trigger="cron",
@@ -271,7 +154,6 @@ def start_scheduler():
     # )
 
     scheduler.start()
-
     logger.info("Automation scheduler started.")
 
 

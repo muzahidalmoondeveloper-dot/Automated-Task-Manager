@@ -79,7 +79,14 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: str | None = None
     SMTP_FROM_EMAIL: str = "no-reply@example.com"
     SMTP_FROM_NAME: str = "Automated Task Manager"
-    
+
+    # ── Redis / Celery ───────────────────────────────────────────────────────
+    # Set REDIS_URL for a single-URL setup (Render Key Value).
+    # Override CELERY_BROKER_URL / CELERY_RESULT_BACKEND for split configs.
+    REDIS_URL: str = "redis://localhost:6379/0"
+    CELERY_BROKER_URL: str | None = None
+    CELERY_RESULT_BACKEND: str | None = None
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -89,6 +96,14 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
+
+    @property
+    def celery_broker(self) -> str:
+        return self.CELERY_BROKER_URL or self.REDIS_URL
+
+    @property
+    def celery_backend(self) -> str:
+        return self.CELERY_RESULT_BACKEND or self.REDIS_URL
 
 
 @lru_cache
