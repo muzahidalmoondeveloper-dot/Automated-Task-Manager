@@ -186,12 +186,13 @@ Extract structured parameters from the user's question.
 Return ONLY a JSON object:
 {
   "sub_intent": "one of the values below",
-  "user_name": "string or null — the name of a specific user mentioned",
+  "user_name": "string or null — the name of a specific OTHER user mentioned (NOT the current user)",
   "project_name": "string or null — the name of a specific project mentioned",
   "team_name": "string or null — the name of a specific team mentioned",
   "status": "string or null — the status keyword mentioned, normalized to: todo|in_progress|pending_review|done|active|paused|completed|cancelled",
   "role": "admin|team_manager|team_member or null",
-  "days_ahead": "integer or null — for due-soon queries, how many days ahead (default 7)"
+  "days_ahead": "integer or null — for due-soon queries, how many days ahead (default 7)",
+  "target_self": "true or false — set true when the user refers to themselves with words like 'my', 'mine', 'I have', 'my list', 'my tasks'; set false when asking about another named user or everyone"
 }
 
 Sub-intent values and when to use them:
@@ -484,7 +485,10 @@ class ChatService:
     ) -> tuple[str, list[ChatAction]]:
         from app.core.roles import ADMIN, TEAM_MANAGER
 
-        if user.role in {ADMIN, TEAM_MANAGER}:
+        msg_lower = message.lower()
+        self_ref = any(w in msg_lower for w in ["my task", "my list", "my todo", "i have", "assigned to me", "my work"])
+
+        if user.role in {ADMIN, TEAM_MANAGER} and not self_ref:
             tasks = await self._task_repo.list_all()
         else:
             tasks = await self._task_repo.list_for_assignee(user.id)
@@ -797,6 +801,7 @@ class ChatService:
         raw_status: str | None = params.get("status")
         role: str | None = params.get("role")
         days_ahead: int = int(params.get("days_ahead") or 7)
+        target_self: bool = str(params.get("target_self", "false")).lower() == "true"
 
         status = _normalize_status(raw_status)
         project_status = _normalize_project_status(raw_status)
@@ -856,11 +861,12 @@ class ChatService:
                     return "You can only view your own tasks.", []
                 target_id = target.id
                 target_label = target.full_name
-            elif can_see_all:
-                return "Which user are you asking about?", []
-            else:
+            elif target_self or not can_see_all:
+                # User is asking about their own tasks ("my tasks", "my list", etc.)
                 target_id = user.id
-                target_label = user.full_name
+                target_label = "You"
+            else:
+                return "Which user are you asking about?", []
 
             tasks = await self._task_repo.list_for_assignee(target_id)
             if not tasks:
@@ -894,7 +900,9 @@ class ChatService:
         # ── task_by_status ────────────────────────────────────────────────────
         if sub_intent == "task_by_status":
             tasks = (
-                await self._task_repo.list_all()
+                await self._task_repo.list_for_assignee(user.id)
+                if target_self
+                else await self._task_repo.list_all()
                 if can_see_all
                 else await self._task_repo.list_for_assignee(user.id)
             )
@@ -923,7 +931,9 @@ class ChatService:
         if sub_intent == "task_overdue":
             today = date.today()
             tasks = (
-                await self._task_repo.list_all()
+                await self._task_repo.list_for_assignee(user.id)
+                if target_self
+                else await self._task_repo.list_all()
                 if can_see_all
                 else await self._task_repo.list_for_assignee(user.id)
             )
@@ -985,7 +995,9 @@ class ChatService:
             today = date.today()
             cutoff = today + timedelta(days=days_ahead)
             tasks = (
-                await self._task_repo.list_all()
+                await self._task_repo.list_for_assignee(user.id)
+                if target_self
+                else await self._task_repo.list_all()
                 if can_see_all
                 else await self._task_repo.list_for_assignee(user.id)
             )
@@ -1168,30 +1180,15 @@ class ChatService:
     async def _handle_general(
         self, user: User, message: str, history: str
     ) -> tuple[str, list[ChatAction]]:
-        from app.core.roles import ADMIN, TEAM_MANAGER
-
-        if user.role in {ADMIN, TEAM_MANAGER}:
-            tasks = await self._task_repo.list_all()
-        else:
-            tasks = await self._task_repo.list_for_assignee(user.id)
-
-        task_summary = (
-            f"The user currently has {len(tasks)} task(s). "
-            f"Status breakdown: "
-            + ", ".join(
-                f"{s}={sum(1 for t in tasks if t.status == s)}"
-                for s in ["todo", "in_progress", "pending_review", "done"]
-            )
-        )
-
         result = await self._llm.generate_text(
             system_prompt=(
-                f"You are a helpful task management assistant for {user.full_name}. "
-                f"{task_summary}. "
-                "Answer the user's question helpfully and concisely. "
-                "You can help with: creating tasks, checking task status, managing workflows, "
-                "and general task management advice. "
-                "Keep responses under 200 words unless more detail is explicitly requested."
+                f"You are a helpful AI assistant for {user.full_name} in a task management application. "
+                "Answer the user's question using your knowledge. "
+                "You can help with: task management strategies, productivity tips, project management advice, "
+                "workflow optimization, prioritization techniques, and general questions. "
+                "If the user is asking about specific data in the system (e.g. their task counts, "
+                "user lists, project status), let them know they can ask more specifically and you'll look it up. "
+                "Keep responses concise — under 200 words unless more detail is explicitly requested."
             ),
             user_prompt=(
                 f"Conversation so far:\n{history}\n\nUser: {message}" if history else message
