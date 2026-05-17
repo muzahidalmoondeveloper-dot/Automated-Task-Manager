@@ -1,3 +1,4 @@
+import logging
 from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -12,7 +13,7 @@ from app.core.dependencies import (
 from app.core.roles import ADMIN, TEAM_MANAGER, TEAM_MEMBER
 from app.models.notification import Notification
 from app.models.task import Task
-from app.models.team import Team
+from app.models.team import Team, TeamMembership
 from app.models.user import User
 from app.repositories.project_repository import ProjectRepository
 from app.repositories.task_repository import TaskRepository
@@ -28,9 +29,14 @@ from app.schemas.task import (
 )
 from app.schemas.team import TeamRead
 from app.schemas.user import UserRead
+from app.services.email_service import email_service
 
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
 
+logger = logging.getLogger("tasks")
+
+
+# ─── Helpers ──────────────────────────────────────────────────────────────────
 
 def serialize_task(task: Task) -> TaskDetailRead:
     return TaskDetailRead(
@@ -151,6 +157,14 @@ def _apply_task_filters(
     return result
 
 
+async def _fire_email(coro) -> None:
+    """Await an email coroutine, swallowing all exceptions so task ops are never blocked."""
+    try:
+        await coro
+    except Exception as exc:
+        logger.warning("Email notification suppressed: %s", exc)
+
+
 # ─── My Tasks (all roles) ─────────────────────────────────────────────────────
 
 @router.get("/my", response_model=list[TaskDetailRead])
@@ -255,7 +269,7 @@ async def create_task(
 
     task = await task_repo.create(payload, created_by_id=current_user.id)
 
-    # Notify the assignee (skip if assigning to yourself)
+    # In-app notification + email for new assignee (skip self-assignment)
     if payload.assignee_id and payload.assignee_id != current_user.id:
         await create_notification(
             db=db,
@@ -266,6 +280,30 @@ async def create_task(
             type_="task_assigned",
         )
         await db.commit()
+
+        # Re-fetch the assignee by explicit ID — never use task.assignee here
+        # because the ORM identity map can return the wrong user when the Task
+        # model has multiple FK columns pointing to User (created_by_id,
+        # completed_by_id, reviewed_by_id, assignee_id).
+        assignee_user = await UserRepository(db).get_by_id(payload.assignee_id)
+        if assignee_user:
+            logger.info(
+                "Triggering task_assigned email | task_id=%s | assigner_id=%s | assignee_id=%s | recipient=%s",
+                task.id, current_user.id, assignee_user.id, assignee_user.email,
+            )
+            await _fire_email(
+                email_service.send_task_assigned(
+                    db,
+                    task=task,
+                    assignee=assignee_user,   # ← the person receiving the task
+                    assigned_by=current_user,  # ← the person who created it
+                )
+            )
+        else:
+            logger.warning(
+                "task_assigned email skipped — assignee not found | task_id=%s | assignee_id=%s",
+                task.id, payload.assignee_id,
+            )
 
     return serialize_task(task)
 
@@ -392,6 +430,76 @@ async def update_task_status(
             await db.commit()
 
             updated_task = await repository.get_by_id(task.id)
+
+            # Email the reviewer: team manager > member's team manager > admin fallback.
+            user_repo = UserRepository(db)
+            reviewer: User | None = None
+
+            if team and team.team_manager_id:
+                # Task has an explicit team — use that team's manager.
+                reviewer = await user_repo.get_by_id(team.team_manager_id)
+                logger.info(
+                    "task_sent_for_review: resolved reviewer from task.team_id=%s | manager_id=%s | reviewer=%s",
+                    task.team_id, team.team_manager_id, reviewer.email if reviewer else None,
+                )
+
+            if reviewer is None:
+                # Task has no team (or manager lookup failed) — try the submitter's
+                # own team membership to find their team manager.
+                membership_result = await db.execute(
+                    select(TeamMembership)
+                    .where(TeamMembership.user_id == current_user.id)
+                    .limit(1)
+                )
+                membership = membership_result.scalar_one_or_none()
+                if membership:
+                    member_team_result = await db.execute(
+                        select(Team).where(Team.id == membership.team_id)
+                    )
+                    member_team = member_team_result.scalar_one_or_none()
+                    if member_team and member_team.team_manager_id:
+                        reviewer = await user_repo.get_by_id(member_team.team_manager_id)
+                        logger.info(
+                            "task_sent_for_review: resolved reviewer from submitter membership"
+                            " | team_id=%s | manager_id=%s | reviewer=%s",
+                            membership.team_id, member_team.team_manager_id,
+                            reviewer.email if reviewer else None,
+                        )
+
+            if reviewer is None:
+                # Last resort — first active admin.
+                admin_result = await db.execute(
+                    select(User)
+                    .where(User.role == ADMIN)
+                    .where(User.is_active.is_(True))
+                    .limit(1)
+                )
+                reviewer = admin_result.scalar_one_or_none()
+                if reviewer:
+                    logger.info(
+                        "task_sent_for_review: admin fallback | task_id=%s | admin=%s",
+                        task.id, reviewer.email,
+                    )
+
+            if reviewer:
+                logger.info(
+                    "Triggering task_sent_for_review email | task_id=%s | submitter_id=%s | reviewer_id=%s | recipient=%s",
+                    updated_task.id, current_user.id, reviewer.id, reviewer.email,
+                )
+                await _fire_email(
+                    email_service.send_task_sent_for_review(
+                        db,
+                        task=updated_task,
+                        assignee=current_user,
+                        manager=reviewer,
+                    )
+                )
+            else:
+                logger.warning(
+                    "task_sent_for_review email skipped — no manager or admin found | task_id=%s",
+                    task.id,
+                )
+
             return serialize_task(updated_task)
 
         if payload.status not in {"todo", "in_progress"}:
@@ -438,15 +546,17 @@ async def approve_task(
             detail="Only pending review tasks can be approved.",
         )
 
+    completed_by_id = task.completed_by_id
+
     task.status = "done"
     task.reviewed_by_id = current_user.id
     task.reviewed_at = datetime.now(timezone.utc)
     task.review_note = "Approved"
 
-    if task.completed_by_id:
+    if completed_by_id:
         await create_notification(
             db=db,
-            user_id=task.completed_by_id,
+            user_id=completed_by_id,
             task_id=task.id,
             title="Task approved",
             message=f"Your task '{task.name}' was approved.",
@@ -456,6 +566,29 @@ async def approve_task(
     await db.commit()
 
     updated_task = await repository.get_by_id(task.id)
+
+    # Email the person who submitted the task for review (completed_by, not necessarily current assignee)
+    if completed_by_id:
+        user_repo = UserRepository(db)
+        recipient = await user_repo.get_by_id(completed_by_id)
+        if recipient:
+            logger.info(
+                "Triggering task_approved email | task_id=%s | approver_id=%s | recipient_id=%s | recipient=%s",
+                updated_task.id, current_user.id, recipient.id, recipient.email,
+            )
+            await _fire_email(
+                email_service.send_task_approved(
+                    db,
+                    task=updated_task,
+                    assignee=recipient,        # ← the person who completed/submitted the task
+                    approved_by=current_user,  # ← the manager who approved
+                )
+            )
+        else:
+            logger.warning(
+                "task_approved email skipped — submitter user not found | task_id=%s | completed_by_id=%s",
+                updated_task.id, completed_by_id,
+            )
 
     return serialize_task(updated_task)
 
@@ -499,6 +632,27 @@ async def assign_task_back(
 
     updated_task = await repository.get_by_id(task.id)
 
+    # Email the assignee with manager feedback
+    if updated_task.assignee:
+        logger.info(
+            "Triggering task_assigned_back email | task_id=%s | manager_id=%s | assignee_id=%s | recipient=%s",
+            updated_task.id, current_user.id, updated_task.assignee.id, updated_task.assignee.email,
+        )
+        await _fire_email(
+            email_service.send_task_assigned_back(
+                db,
+                task=updated_task,
+                assignee=updated_task.assignee,  # ← the assignee getting the feedback
+                manager=current_user,             # ← the manager who rejected
+                note=note,
+            )
+        )
+    else:
+        logger.warning(
+            "task_assigned_back email skipped — no assignee on task | task_id=%s",
+            updated_task.id,
+        )
+
     return serialize_task(updated_task)
 
 
@@ -531,15 +685,18 @@ async def update_task(
             )
 
     old_assignee_id = task.assignee_id
+    old_due_date = task.due_date
+
     updated_task = await repository.update(task, payload)
 
-    # Notify new assignee when assignee changes (skip self-assignment)
     new_assignee_id = payload.assignee_id
-    if (
+    assignee_changed = (
         new_assignee_id is not None
         and new_assignee_id != old_assignee_id
-        and new_assignee_id != current_user.id
-    ):
+    )
+
+    # Notify new assignee when assignee changes (skip self-assignment)
+    if assignee_changed and new_assignee_id != current_user.id:
         await create_notification(
             db=db,
             user_id=new_assignee_id,
@@ -549,6 +706,44 @@ async def update_task(
             type_="task_assigned",
         )
         await db.commit()
+
+        # Always re-fetch by explicit ID — task.assignee can resolve to the wrong
+        # user when SQLAlchemy's identity map is populated with the assigner.
+        new_assignee_user = await UserRepository(db).get_by_id(new_assignee_id)
+        if new_assignee_user:
+            logger.info(
+                "Triggering task_assigned email (reassign) | task_id=%s | assigner_id=%s | assignee_id=%s | recipient=%s",
+                updated_task.id, current_user.id, new_assignee_user.id, new_assignee_user.email,
+            )
+            await _fire_email(
+                email_service.send_task_assigned(
+                    db,
+                    task=updated_task,
+                    assignee=new_assignee_user,   # ← the NEW assignee receiving the task
+                    assigned_by=current_user,      # ← the manager who reassigned
+                )
+            )
+        else:
+            logger.warning(
+                "task_assigned email skipped — new assignee not found | task_id=%s | assignee_id=%s",
+                updated_task.id, new_assignee_id,
+            )
+
+    # Email current assignee when only the due date changes
+    if (
+        not assignee_changed
+        and old_due_date != updated_task.due_date
+        and updated_task.assignee
+    ):
+        await _fire_email(
+            email_service.send_due_date_updated(
+                db,
+                task=updated_task,
+                assignee=updated_task.assignee,
+                updated_by=current_user,
+                old_due_date=old_due_date,
+            )
+        )
 
     return serialize_task(updated_task)
 

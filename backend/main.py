@@ -11,6 +11,7 @@ from app.core.database import engine, Base
 from app.api.routes import auth, users, teams, projects, tasks, integrations, task_suggestions
 from app.api.routes import chat, notifications
 import app.models.chat  # noqa: F401  — register models for auto table creation
+import app.models.email_notification_log  # noqa: F401  — register EmailNotificationLog
 from contextlib import asynccontextmanager
 import logging
 from app.services.automation_scheduler import start_scheduler, stop_scheduler
