@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { NavLink, useNavigate } from "react-router-dom";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
 
 import { useAuth } from "../../context/AuthContext";
 import { projectApi } from "../../api/projectApi";
@@ -81,6 +81,38 @@ function IntegrationsIcon() {
   );
 }
 
+
+function OrganizationIcon() {
+  return (
+    <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+      <path fillRule="evenodd" d="M4 16.5v-13h-.25a.75.75 0 010-1.5h12.5a.75.75 0 010 1.5H16v13h.25a.75.75 0 010 1.5h-3.5a.75.75 0 01-.75-.75v-2.5a.75.75 0 00-.75-.75h-2.5a.75.75 0 00-.75.75v2.5a.75.75 0 01-.75.75h-3.5a.75.75 0 010-1.5H4zm3-11a.75.75 0 01.75-.75h4.5a.75.75 0 010 1.5h-4.5A.75.75 0 017 5.5zm0 4a.75.75 0 01.75-.75h4.5a.75.75 0 010 1.5h-4.5A.75.75 0 017 9.5z" clipRule="evenodd" />
+    </svg>
+  );
+}
+
+function CoreValuesIcon() {
+  return (
+    <svg className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+      <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+    </svg>
+  );
+}
+
+function OrgChartIcon() {
+  return (
+    <svg className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+      <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v1h8v-1zM6 8a2 2 0 11-4 0 2 2 0 014 0zM16 18v-1a5.972 5.972 0 00-.75-2.906A3.005 3.005 0 0119 15v1h-3zM4.75 12.094A5.973 5.973 0 004 15v1H1v-1a3 3 0 013.75-2.906z" />
+    </svg>
+  );
+}
+
+function ObjectivesIcon() {
+  return (
+    <svg className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z" clipRule="evenodd" />
+    </svg>
+  );
+}
 
 function MenuIcon() {
   return (
@@ -222,6 +254,197 @@ function NestedItem({ to, icon, label, collapsed, onClick }) {
       </span>
       {!collapsed ? <span className="truncate">{label}</span> : null}
     </NavLink>
+  );
+}
+
+function OrgNestedItem({ to, tabValue, icon, label, collapsed, onClick }) {
+  const location = useLocation();
+  const isActive =
+    location.pathname === "/organization" &&
+    location.search.includes(`tab=${tabValue}`);
+
+  return (
+    <NavLink
+      to={to}
+      onClick={onClick}
+      title={label}
+      className={() =>
+        cx(
+          "group flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition",
+          collapsed && "justify-center px-2",
+          isActive
+            ? "bg-slate-900 text-white"
+            : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+        )
+      }
+    >
+      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-slate-100 text-current">
+        {icon}
+      </span>
+      {!collapsed ? <span className="truncate">{label}</span> : null}
+    </NavLink>
+  );
+}
+
+// ─── Team sub-tab icons ───────────────────────────────────────────────────────
+
+function NewsIcon() {
+  return (
+    <svg className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+      <path fillRule="evenodd" d="M2 5a2 2 0 012-2h8a2 2 0 012 2v10a2 2 0 002 2H4a2 2 0 01-2-2V5zm3 1h6v4H5V6zm6 6H5v2h6v-2z" clipRule="evenodd" />
+      <path d="M15 7h1a2 2 0 012 2v5.5a1.5 1.5 0 01-3 0V7z" />
+    </svg>
+  );
+}
+
+function RocksIcon() {
+  return (
+    <svg className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+      <path fillRule="evenodd" d="M10 1l2.928 6.057L20 8.07l-5 4.952L16.18 20 10 16.785 3.82 20 5 13.022 0 8.07l7.072-1.013L10 1z" clipRule="evenodd" />
+    </svg>
+  );
+}
+
+function KPIsIcon() {
+  return (
+    <svg className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+      <path fillRule="evenodd" d="M12 7a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0V8.414l-4.293 4.293a1 1 0 01-1.414 0L8 10.414l-4.293 4.293a1 1 0 01-1.414-1.414l5-5a1 1 0 011.414 0L11 10.586 14.586 7H12z" clipRule="evenodd" />
+    </svg>
+  );
+}
+
+function TodosIcon() {
+  return (
+    <svg className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+      <path d="M7 3a1 1 0 000 2h6a1 1 0 100-2H7zM4 7a1 1 0 011-1h10a1 1 0 110 2H5a1 1 0 01-1-1zM2 11a2 2 0 012-2h12a2 2 0 012 2v4a2 2 0 01-2 2H4a2 2 0 01-2-2v-4z" />
+    </svg>
+  );
+}
+
+function IssuesIcon() {
+  return (
+    <svg className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+      <path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+    </svg>
+  );
+}
+
+function MeetingsIcon() {
+  return (
+    <svg className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+      <path fillRule="evenodd" d="M5.75 2a.75.75 0 01.75.75V4h7V2.75a.75.75 0 011.5 0V4h.25A2.75 2.75 0 0118 6.75v8.5A2.75 2.75 0 0115.25 18H4.75A2.75 2.75 0 012 15.25v-8.5A2.75 2.75 0 014.75 4H5V2.75A.75.75 0 015.75 2zm-1 5.5c0-.414.336-.75.75-.75h9a.75.75 0 010 1.5h-9A.75.75 0 014.75 7.5z" clipRule="evenodd" />
+    </svg>
+  );
+}
+
+const TEAM_TABS = [
+  { id: "news",     label: "News",     icon: <NewsIcon /> },
+  { id: "rocks",    label: "Rocks",    icon: <RocksIcon /> },
+  { id: "kpis",     label: "KPIs",     icon: <KPIsIcon /> },
+  { id: "todos",    label: "To-Dos",   icon: <TodosIcon /> },
+  { id: "issues",   label: "Issues",   icon: <IssuesIcon /> },
+  { id: "meetings", label: "Meetings", icon: <MeetingsIcon /> },
+];
+
+function ChevronDownIcon() {
+  return (
+    <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+      <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 011.06 0L10 11.94l3.72-3.72a.75.75 0 111.06 1.06l-4.25 4.25a.75.75 0 01-1.06 0L5.22 9.28a.75.75 0 010-1.06z" clipRule="evenodd" />
+    </svg>
+  );
+}
+
+function TeamSubItem({ to, tabId, teamId, icon, label, collapsed, onClick }) {
+  const location = useLocation();
+  const defaultTab = "news";
+  const activeTab = new URLSearchParams(location.search).get("tab") || defaultTab;
+  const isActive = location.pathname === `/teams/${teamId}` && activeTab === tabId;
+
+  return (
+    <NavLink
+      to={to}
+      onClick={onClick}
+      title={label}
+      className={() =>
+        cx(
+          "group flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition",
+          collapsed && "justify-center px-2",
+          isActive
+            ? "bg-slate-900 text-white"
+            : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+        )
+      }
+    >
+      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-slate-100 text-current">
+        {icon}
+      </span>
+      {!collapsed ? <span className="truncate">{label}</span> : null}
+    </NavLink>
+  );
+}
+
+function TeamSection({ team, collapsed, onClick }) {
+  const location = useLocation();
+  const isOnTeam = location.pathname === `/teams/${team.id}`;
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    if (isOnTeam) setExpanded(true);
+  }, [location.pathname]);
+
+  if (collapsed) {
+    return (
+      <NavLink
+        to={`/teams/${team.id}?tab=news`}
+        title={team.name}
+        onClick={onClick}
+        className={({ isActive }) =>
+          cx(
+            "flex items-center justify-center rounded-xl p-2.5 transition",
+            isActive ? "bg-slate-950 text-white" : "text-slate-500 hover:bg-slate-100"
+          )
+        }
+      >
+        <TeamsIcon />
+      </NavLink>
+    );
+  }
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className={cx(
+          "flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold transition",
+          isOnTeam ? "text-slate-900" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+        )}
+      >
+        <span className="flex h-5 w-5 shrink-0 items-center justify-center">
+          <TeamsIcon />
+        </span>
+        <span className="flex-1 truncate text-left">{team.name}</span>
+        <span className={cx("shrink-0 text-slate-400 transition-transform", expanded && "rotate-180")}>
+          <ChevronDownIcon />
+        </span>
+      </button>
+      {expanded && (
+        <div className="mt-0.5 space-y-0.5 pl-3">
+          {TEAM_TABS.map((tab) => (
+            <TeamSubItem
+              key={tab.id}
+              to={`/teams/${team.id}?tab=${tab.id}`}
+              tabId={tab.id}
+              teamId={team.id}
+              icon={tab.icon}
+              label={tab.label}
+              collapsed={collapsed}
+              onClick={onClick}
+            />
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -627,6 +850,45 @@ function SidebarContent({
             />
           ) : null}
 
+          <>
+            <SectionTitle collapsed={collapsed}>Organization</SectionTitle>
+
+            <NavItem
+              to="/organization"
+              icon={<OrganizationIcon />}
+              label="Organization"
+              collapsed={collapsed}
+              onClick={handleClickNav}
+            />
+
+            <div className={cx("space-y-1", !collapsed && "pl-3")}>
+              <OrgNestedItem
+                to="/organization?tab=core-values"
+                tabValue="core-values"
+                icon={<CoreValuesIcon />}
+                label="Core Values"
+                collapsed={collapsed}
+                onClick={handleClickNav}
+              />
+              <OrgNestedItem
+                to="/organization?tab=org-chart"
+                tabValue="org-chart"
+                icon={<OrgChartIcon />}
+                label="Org Chart"
+                collapsed={collapsed}
+                onClick={handleClickNav}
+              />
+              <OrgNestedItem
+                to="/organization?tab=objectives"
+                tabValue="objectives"
+                icon={<ObjectivesIcon />}
+                label="Objectives"
+                collapsed={collapsed}
+                onClick={handleClickNav}
+              />
+            </div>
+          </>
+
           {canViewTeams ? (
             <>
               <SectionTitle collapsed={collapsed}>Teams</SectionTitle>
@@ -652,7 +914,7 @@ function SidebarContent({
                 </div>
               )}
 
-              <div className={cx("space-y-1", !collapsed && "pl-3")}>
+              <div className={cx("space-y-1", !collapsed && "")}>
                 {isLoadingTeams && !collapsed ? (
                   <p className="px-3 py-2 text-xs text-slate-400">
                     Loading teams...
@@ -666,11 +928,9 @@ function SidebarContent({
                 ) : null}
 
                 {teams.map((team) => (
-                  <NestedItem
+                  <TeamSection
                     key={team.id}
-                    to={`/teams/${team.id}`}
-                    icon={<TeamsIcon />}
-                    label={team.name}
+                    team={team}
                     collapsed={collapsed}
                     onClick={handleClickNav}
                   />

@@ -11,3 +11,8 @@ from app.models.integration import (
     MeetingTranscript,
 )
 from app.models.email_notification_log import EmailNotificationLog
+from app.models.org_value import OrgValue
+from app.models.objective import Objective
+from app.models.org_role import OrgRole
+from app.models.team_news import TeamNews
+from app.models.rock import Rock, Milestone
