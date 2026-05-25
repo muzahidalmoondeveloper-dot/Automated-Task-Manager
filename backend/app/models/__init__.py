@@ -4,6 +4,7 @@ from app.models.project import Project
 from app.models.task import Task
 from app.models.task_suggestion import TaskSuggestion
 from app.models.auth_security import EmailOTP, IPAuthLock
+from app.models.refresh_token import RefreshToken
 from app.models.integration import (
     IntegrationAccount,
     ImportedEmail,
