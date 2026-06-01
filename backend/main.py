@@ -8,10 +8,25 @@ from sqlalchemy import text
 
 from app.core.config import get_settings
 from app.core.database import engine, Base
+from app.core.exception_handlers import register_exception_handlers
+from app.core.redis_client import close_redis, get_redis
 from app.api.routes import auth, users, teams, projects, tasks, integrations, task_suggestions
 from app.api.routes import chat, notifications
+from app.api.routes import organization  # noqa: F401
+from app.api.routes import team_news
+from app.api.routes import rocks
+from app.api.routes import kpi
+from app.api.routes import issues
+import app.models.issue  # noqa: F401  — register Issue
 import app.models.chat  # noqa: F401  — register models for auto table creation
 import app.models.email_notification_log  # noqa: F401  — register EmailNotificationLog
+import app.models.org_value  # noqa: F401  — register OrgValue
+import app.models.objective  # noqa: F401  — register Objective
+import app.models.org_role  # noqa: F401  — register OrgRole
+import app.models.team_news  # noqa: F401  — register TeamNews
+import app.models.rock  # noqa: F401  — register Rock, Milestone
+import app.models.kpi  # noqa: F401  — register KPI, KPIEntry
+import app.models.refresh_token  # noqa: F401  — register RefreshToken
 from contextlib import asynccontextmanager
 import logging
 from app.services.automation_scheduler import start_scheduler, stop_scheduler
@@ -22,6 +37,8 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    await get_redis()  # warm up Redis connection pool on startup
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await conn.execute(text(
@@ -33,6 +50,24 @@ async def lifespan(app: FastAPI):
         await conn.execute(text(
             "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS priority VARCHAR(20) NOT NULL DEFAULT 'medium'"
         ))
+        await conn.execute(text(
+            "ALTER TABLE rocks ADD COLUMN IF NOT EXISTS icon VARCHAR(200)"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE rocks ADD COLUMN IF NOT EXISTS is_archived BOOLEAN NOT NULL DEFAULT FALSE"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE kpi_entries ADD COLUMN IF NOT EXISTS forecast DOUBLE PRECISION"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE kpi_entries ADD COLUMN IF NOT EXISTS notes JSONB DEFAULT '[]'"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE kpis ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 0"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE kpi_entries ALTER COLUMN value DROP NOT NULL"
+        ))
 
     await seed_admin()
 
@@ -42,6 +77,7 @@ async def lifespan(app: FastAPI):
 
     stop_scheduler()
 
+    await close_redis()
     await engine.dispose()
 
 
@@ -66,6 +102,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+register_exception_handlers(app)
+
 app.include_router(auth.router, prefix=settings.API_PREFIX)
 app.include_router(users.router, prefix=settings.API_PREFIX)
 app.include_router(teams.router, prefix=settings.API_PREFIX)
@@ -75,6 +113,11 @@ app.include_router(integrations.router, prefix=settings.API_PREFIX)
 app.include_router(task_suggestions.router, prefix=settings.API_PREFIX)
 app.include_router(chat.router, prefix=settings.API_PREFIX)
 app.include_router(notifications.router, prefix=settings.API_PREFIX)
+app.include_router(organization.router, prefix=settings.API_PREFIX)
+app.include_router(team_news.router, prefix=settings.API_PREFIX)
+app.include_router(rocks.router, prefix=settings.API_PREFIX)
+app.include_router(kpi.router, prefix=settings.API_PREFIX)
+app.include_router(issues.router, prefix=settings.API_PREFIX)
 
 @app.get("/health")
 async def health_check():

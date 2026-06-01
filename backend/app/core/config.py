@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     JWT_SECRET_KEY: str
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 30
 
     BACKEND_BASE_URL: str = "https://automated-task-manager.onrender.com"
     FRONTEND_BASE_URL: str = "https://automated-task-manager.onrender.com"
@@ -86,10 +87,8 @@ class Settings(BaseSettings):
     SMTP_FROM_EMAIL: str = "no-reply@example.com"
     SMTP_FROM_NAME: str = "Automated Task Manager"
 
-    # ── Redis / Celery (disabled — app uses FastAPI BackgroundTasks) ─────────
-    # These vars are kept so existing .env files don't break on startup.
-    # They are not used by the active code path; leave them unset or empty.
-    REDIS_URL: str | None = None
+    # ── Redis ────────────────────────────────────────────────────────────────
+    REDIS_URL: str = "redis://localhost:6379/0"
     CELERY_BROKER_URL: str | None = None
     CELERY_RESULT_BACKEND: str | None = None
 
