@@ -47,20 +47,18 @@ def _serializer() -> URLSafeSerializer:
     return URLSafeSerializer(settings.JWT_SECRET_KEY, salt="integration-oauth")
 
 
-def create_state(user_id: int, provider: str) -> str:
-    return _serializer().dumps(
-        {
-            "user_id": user_id,
-            "provider": provider,
-        }
-    )
+def create_state(user_id: int, provider: str, org_id: str | None = None) -> str:
+    data: dict = {"user_id": user_id, "provider": provider}
+    if org_id:
+        data["org_id"] = org_id
+    return _serializer().dumps(data)
 
 
 def read_state(state: str) -> dict:
     return _serializer().loads(state)
 
 
-def google_auth_url(user_id: int) -> str:
+def google_auth_url(user_id: int, org_id: str | None = None) -> str:
     params = {
         "client_id": settings.GOOGLE_CLIENT_ID,
         "redirect_uri": settings.GOOGLE_REDIRECT_URI,
@@ -68,20 +66,20 @@ def google_auth_url(user_id: int) -> str:
         "scope": " ".join(settings.GOOGLE_SCOPES),
         "access_type": "offline",
         "prompt": "consent",
-        "state": create_state(user_id, "google"),
+        "state": create_state(user_id, "google", org_id=org_id),
     }
 
     return f"{GOOGLE_AUTH_URL}?{urlencode(params)}"
 
 
-def microsoft_auth_url(user_id: int) -> str:
+def microsoft_auth_url(user_id: int, org_id: str | None = None) -> str:
     params = {
         "client_id": settings.MICROSOFT_CLIENT_ID,
         "redirect_uri": settings.MICROSOFT_REDIRECT_URI,
         "response_type": "code",
         "scope": " ".join(settings.MICROSOFT_SCOPES),
         "response_mode": "query",
-        "state": create_state(user_id, "microsoft"),
+        "state": create_state(user_id, "microsoft", org_id=org_id),
     }
 
     auth_url = MICROSOFT_AUTH_URL.format(

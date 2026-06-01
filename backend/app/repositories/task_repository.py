@@ -1,9 +1,12 @@
+import uuid
 from datetime import date
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.task import Task
+from app.repositories.base_tenant_repository import TenantRepository
 from app.schemas.task import TaskCreate, TaskUpdate
 
 _TASK_EAGER = [
@@ -13,9 +16,12 @@ _TASK_EAGER = [
 ]
 
 
-class TaskRepository:
-    def __init__(self, db: AsyncSession):
-        self.db = db
+class TaskRepository(TenantRepository):
+    def __init__(self, db: AsyncSession, org_id: uuid.UUID) -> None:
+        super().__init__(db, org_id)
+
+    def _base_stmt(self):
+        return select(Task).where(Task.organization_id == self.org_id).options(*_TASK_EAGER)
 
     async def list_all(
         self,
@@ -29,7 +35,7 @@ class TaskRepository:
         due_date_to: date | None = None,
         overdue: bool = False,
     ) -> list[Task]:
-        stmt = select(Task).options(*_TASK_EAGER)
+        stmt = self._base_stmt()
         if status:
             stmt = stmt.where(Task.status == status)
         if priority:
@@ -65,11 +71,7 @@ class TaskRepository:
         due_date_to: date | None = None,
         overdue: bool = False,
     ) -> list[Task]:
-        stmt = (
-            select(Task)
-            .where(Task.assignee_id == user_id)
-            .options(*_TASK_EAGER)
-        )
+        stmt = self._base_stmt().where(Task.assignee_id == user_id)
         if status:
             stmt = stmt.where(Task.status == status)
         if priority:
@@ -92,32 +94,26 @@ class TaskRepository:
         return list(result.scalars().all())
 
     async def list_by_project(self, project_id: int) -> list[Task]:
-        statement = (
-            select(Task)
+        stmt = (
+            self._base_stmt()
             .where(Task.project_id == project_id)
-            .options(*_TASK_EAGER)
             .order_by(Task.due_date.asc(), Task.created_at.desc())
         )
-        result = await self.db.execute(statement)
+        result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
     async def list_by_team(self, team_id: int) -> list[Task]:
-        statement = (
-            select(Task)
+        stmt = (
+            self._base_stmt()
             .where(Task.team_id == team_id)
-            .options(*_TASK_EAGER)
             .order_by(Task.due_date.asc(), Task.created_at.desc())
         )
-        result = await self.db.execute(statement)
+        result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
     async def get_by_id(self, task_id: int) -> Task | None:
-        statement = (
-            select(Task)
-            .where(Task.id == task_id)
-            .options(*_TASK_EAGER)
-        )
-        result = await self.db.execute(statement)
+        stmt = self._base_stmt().where(Task.id == task_id)
+        result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
     async def create(self, payload: TaskCreate, created_by_id: int) -> Task:
@@ -131,6 +127,7 @@ class TaskRepository:
             project_id=payload.project_id,
             team_id=payload.team_id,
             created_by_id=created_by_id,
+            organization_id=self.org_id,
         )
         self.db.add(task)
         await self.db.commit()
@@ -138,19 +135,13 @@ class TaskRepository:
 
     async def update(self, task: Task, payload: TaskUpdate) -> Task:
         data = payload.model_dump(exclude_unset=True)
-
         if "name" in data and data["name"]:
             data["name"] = data["name"].strip()
-
         fk_changed = any(k in data for k in ("assignee_id", "project_id", "team_id"))
-
         for key, value in data.items():
             setattr(task, key, value)
-
         await self.db.commit()
         await self.db.refresh(task)
-
-        # Only re-fetch when a FK changed so the stale relationship objects are replaced.
         if fk_changed:
             return await self.get_by_id(task.id)
         return task

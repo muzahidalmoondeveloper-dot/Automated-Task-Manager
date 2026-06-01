@@ -3,9 +3,8 @@ from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.dependencies import get_current_user
+from app.core.tenant import TenantContext, get_tenant_context
 from app.models.kpi import KPI, KPIEntry
-from app.models.user import User
 from app.schemas.kpi import KPICreate, KPIUpdate, KPIOut, KPIEntryUpsert, KPIEntryOut, KPIEntryAddNote, KPIReorderItem, KPINoteUpdate
 
 router = APIRouter(tags=["kpis"])
@@ -25,7 +24,7 @@ async def _get_kpi_or_404(db: AsyncSession, team_id: int, kpi_id: int) -> KPI:
 async def list_kpis(
     team_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
     result = await db.execute(
         select(KPI).where(KPI.team_id == team_id).order_by(KPI.sort_order, KPI.created_at.desc())
@@ -38,7 +37,7 @@ async def reorder_kpis(
     team_id: int,
     payload: list[KPIReorderItem],
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
     for item in payload:
         result = await db.execute(select(KPI).where(KPI.id == item.id, KPI.team_id == team_id))
@@ -53,7 +52,7 @@ async def create_kpi(
     team_id: int,
     payload: KPICreate,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
     kpi = KPI(team_id=team_id, **payload.model_dump())
     db.add(kpi)
@@ -68,7 +67,7 @@ async def update_kpi(
     kpi_id: int,
     payload: KPIUpdate,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
     kpi = await _get_kpi_or_404(db, team_id, kpi_id)
     for field, value in payload.model_dump(exclude_none=True).items():
@@ -83,7 +82,7 @@ async def delete_kpi(
     team_id: int,
     kpi_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
     kpi = await _get_kpi_or_404(db, team_id, kpi_id)
     await db.delete(kpi)
@@ -96,7 +95,7 @@ async def upsert_entry(
     kpi_id: int,
     payload: KPIEntryUpsert,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
     await _get_kpi_or_404(db, team_id, kpi_id)
     result = await db.execute(
@@ -134,7 +133,7 @@ async def add_entry_note(
     entry_id: int,
     payload: KPIEntryAddNote,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
     from datetime import datetime as dt
     result = await db.execute(
@@ -147,8 +146,8 @@ async def add_entry_note(
     notes.append({
         "text": payload.text,
         "created_at": dt.utcnow().isoformat(),
-        "author_id": current_user.id,
-        "author_name": current_user.full_name or current_user.email,
+        "author_id": tenant.user.id,
+        "author_name": tenant.user.full_name or tenant.user.email,
     })
     entry.notes = notes
     await db.commit()
@@ -164,7 +163,7 @@ async def edit_entry_note(
     note_idx: int,
     payload: KPINoteUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
     result = await db.execute(
         select(KPIEntry).where(KPIEntry.id == entry_id, KPIEntry.kpi_id == kpi_id)
@@ -189,7 +188,7 @@ async def delete_entry_note(
     entry_id: int,
     note_idx: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
     result = await db.execute(
         select(KPIEntry).where(KPIEntry.id == entry_id, KPIEntry.kpi_id == kpi_id)
@@ -213,7 +212,7 @@ async def delete_entry(
     kpi_id: int,
     entry_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
     result = await db.execute(
         select(KPIEntry).where(KPIEntry.id == entry_id, KPIEntry.kpi_id == kpi_id)

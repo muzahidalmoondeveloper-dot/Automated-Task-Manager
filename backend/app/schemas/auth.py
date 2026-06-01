@@ -3,6 +3,13 @@ from pydantic import BaseModel, EmailStr, Field
 from app.schemas.user import UserRead
 
 
+# Avoid circular import — OrgSummary is a lightweight schema defined in organization.py
+# and imported here only for the login response.
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from app.schemas.organization import OrgSummary
+
+
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=1, max_length=128)
@@ -42,6 +49,9 @@ class LoginPasswordResponse(BaseModel):
     expires_at: int | None = None
     token_type: str = "bearer"
     user: UserRead | None = None
+    # Multi-org selection — populated when the user belongs to >1 org
+    requires_org_selection: bool = False
+    organizations: list = []  # list[OrgSummary] — typed as list to avoid circular import
 
 
 class ResendOTPRequest(BaseModel):
@@ -66,3 +76,7 @@ class RefreshTokenRequest(BaseModel):
 class LogoutRequest(BaseModel):
     refresh_token: str
     logout_all_devices: bool = False
+
+
+class AcceptInvitationRequest(BaseModel):
+    token: str

@@ -13,6 +13,7 @@ from app.core.redis_client import close_redis, get_redis
 from app.api.routes import auth, users, teams, projects, tasks, integrations, task_suggestions
 from app.api.routes import chat, notifications
 from app.api.routes import organization  # noqa: F401
+from app.api.routes import organizations
 from app.api.routes import team_news
 from app.api.routes import rocks
 from app.api.routes import kpi
@@ -27,6 +28,7 @@ import app.models.team_news  # noqa: F401  — register TeamNews
 import app.models.rock  # noqa: F401  — register Rock, Milestone
 import app.models.kpi  # noqa: F401  — register KPI, KPIEntry
 import app.models.refresh_token  # noqa: F401  — register RefreshToken
+import app.models.organization  # noqa: F401  — register Organization, OrganizationMembership, OrganizationInvitation, Subscription
 from contextlib import asynccontextmanager
 import logging
 from app.services.automation_scheduler import start_scheduler, stop_scheduler
@@ -118,6 +120,7 @@ app.include_router(team_news.router, prefix=settings.API_PREFIX)
 app.include_router(rocks.router, prefix=settings.API_PREFIX)
 app.include_router(kpi.router, prefix=settings.API_PREFIX)
 app.include_router(issues.router, prefix=settings.API_PREFIX)
+app.include_router(organizations.router, prefix=settings.API_PREFIX)
 
 @app.get("/health")
 async def health_check():

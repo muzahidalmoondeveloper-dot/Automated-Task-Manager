@@ -3,9 +3,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.dependencies import get_current_user
+from app.core.tenant import TenantContext, get_tenant_context
 from app.models.issue import Issue
-from app.models.user import User
 from app.schemas.issue import IssueCreate, IssueUpdate, IssueOut
 
 router = APIRouter(prefix="/teams/{team_id}/issues", tags=["issues"])
@@ -16,7 +15,7 @@ async def list_issues(
     team_id: int,
     timeframe: str = Query(None),
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
     q = select(Issue).where(Issue.team_id == team_id)
     if timeframe:
@@ -31,7 +30,7 @@ async def create_issue(
     team_id: int,
     payload: IssueCreate,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
     issue = Issue(team_id=team_id, **payload.model_dump())
     db.add(issue)
@@ -46,7 +45,7 @@ async def update_issue(
     issue_id: int,
     payload: IssueUpdate,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
     result = await db.execute(
         select(Issue).where(Issue.id == issue_id, Issue.team_id == team_id)
@@ -66,7 +65,7 @@ async def delete_issue(
     team_id: int,
     issue_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
     result = await db.execute(
         select(Issue).where(Issue.id == issue_id, Issue.team_id == team_id)

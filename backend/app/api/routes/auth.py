@@ -1,14 +1,17 @@
 import time
+import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Request
 from redis.asyncio import Redis
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.access_token_bearer import AccessTokenBearer
-from app.core.auth_errors import AuthError, TokenError
+from app.core.auth_errors import AppException, AuthError, ErrorDef, TokenError
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
+from app.core.org_roles import ORG_OWNER
 from app.core.rate_limiter import RateLimiter, get_rate_limiter
 from app.core.redis_client import get_redis
 from app.core.roles import TEAM_MEMBER
@@ -16,16 +19,19 @@ from app.core.security import (
     create_access_token,
     create_refresh_token,
     decode_refresh_token,
-    hash_token,
     hash_password,
+    hash_token,
     validate_password_strength,
     verify_password,
 )
 from app.core.token_cache import TokenCache, get_token_cache
+from app.models.organization import Organization, OrganizationMembership
 from app.models.user import User
+from app.repositories.organization_repository import OrganizationRepository
 from app.repositories.refresh_token_repository import RefreshTokenRepository
 from app.repositories.user_repository import UserRepository
 from app.schemas.auth import (
+    AcceptInvitationRequest,
     AuthenticatedUserResponse,
     ForgotPasswordRequest,
     LoginPasswordResponse,
@@ -38,26 +44,55 @@ from app.schemas.auth import (
     VerifyLoginOTPRequest,
     VerifyRegisterOTPRequest,
 )
+from app.schemas.organization import OrgSummary
 from app.schemas.user import UserCreate, UserRead
-from app.services.auth_security_service import (
-    AuthSecurityService,
-    get_client_ip,
-)
+from app.services.auth_security_service import AuthSecurityService, get_client_ip
+from fastapi import status as http_status
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
+
+_INVITATION_EXPIRED = ErrorDef(
+    code="INVITATION_EXPIRED",
+    status=http_status.HTTP_400_BAD_REQUEST,
+    message="Invitation has expired.",
+)
+_INVITATION_ACCEPTED = ErrorDef(
+    code="INVITATION_ALREADY_ACCEPTED",
+    status=http_status.HTTP_400_BAD_REQUEST,
+    message="Invitation has already been accepted.",
+)
+_INVITATION_NOT_FOUND = ErrorDef(
+    code="INVITATION_NOT_FOUND",
+    status=http_status.HTTP_404_NOT_FOUND,
+    message="Invitation not found.",
+)
+_ORG_NOT_FOUND = ErrorDef(
+    code="ORG_NOT_FOUND",
+    status=http_status.HTTP_404_NOT_FOUND,
+    message="Organization not found.",
+)
+_NOT_ORG_MEMBER = ErrorDef(
+    code="NOT_ORG_MEMBER",
+    status=http_status.HTTP_403_FORBIDDEN,
+    message="You are not a member of this organization.",
+)
 
 
 async def _issue_token_pair(
     user: User,
     db: AsyncSession,
     token_cache: TokenCache,
+    org_id: uuid.UUID | None = None,
+    org_role: str | None = None,
 ) -> TokenResponse:
-    """Create access + refresh tokens, persist the refresh token, and return the full response."""
+    """Issue access + refresh tokens, persist the refresh token."""
     access_token, _jti, exp = create_access_token(
         subject=str(user.id),
-        extra_claims={"email": user.email, "role": user.role},
+        extra_claims={"email": user.email},
+        org_id=org_id,
+        org_role=org_role,
     )
-    refresh_token_str, refresh_hash, refresh_exp = create_refresh_token(subject=str(user.id))
+    refresh_str, refresh_hash, refresh_exp = create_refresh_token(subject=str(user.id))
 
     token_repo = RefreshTokenRepository(db)
     await token_repo.save(
@@ -66,17 +101,55 @@ async def _issue_token_pair(
         expires_at=datetime.fromtimestamp(refresh_exp, tz=timezone.utc),
     )
     await db.commit()
-
     await token_cache.clear_user_access_token_blacklist(str(user.id))
 
     return TokenResponse(
         access_token=access_token,
-        refresh_token=refresh_token_str,
+        refresh_token=refresh_str,
         expires_at=exp,
-        token_type="bearer",
         user=UserRead.model_validate(user),
     )
 
+
+async def _resolve_org_for_user(
+    user: User,
+    db: AsyncSession,
+) -> tuple[uuid.UUID | None, str | None, list[OrgSummary]]:
+    """Return (org_id, org_role, all_orgs).
+
+    If the user has exactly one org → auto-select it.
+    If multiple or none → return None so the caller can prompt selection.
+    """
+    result = await db.execute(
+        select(Organization, OrganizationMembership)
+        .join(OrganizationMembership, OrganizationMembership.organization_id == Organization.id)
+        .where(
+            OrganizationMembership.user_id == user.id,
+            OrganizationMembership.is_active.is_(True),
+            Organization.is_active.is_(True),
+        )
+    )
+    rows = result.all()
+
+    orgs = [
+        OrgSummary(
+            id=org.id,
+            name=org.name,
+            slug=org.slug,
+            plan=org.plan,
+            role=membership.role,
+        )
+        for org, membership in rows
+    ]
+
+    if len(orgs) == 1:
+        org, membership = rows[0]
+        return org.id, membership.role, orgs
+
+    return None, None, orgs
+
+
+# ── Registration ──────────────────────────────────────────────────────────────
 
 @router.post("/register")
 async def register(
@@ -108,9 +181,7 @@ async def register(
             if existing_user.email_verified_at is None and not existing_user.is_active:
                 security_service = AuthSecurityService(db)
                 await security_service.create_and_send_otp(
-                    user=existing_user,
-                    email=existing_user.email,
-                    purpose="register",
+                    user=existing_user, email=existing_user.email, purpose="register"
                 )
                 return {
                     "message": "You have already registered. A new OTP has been sent to your email.",
@@ -132,7 +203,6 @@ async def register(
             "message": "Registration successful. Please verify the OTP sent to your email.",
             "email": user.email,
         }
-
     except Exception:
         raise
     finally:
@@ -157,10 +227,7 @@ async def verify_register_otp(
     security_service = AuthSecurityService(db)
 
     otp = await security_service.verify_otp(
-        email=str(payload.email),
-        otp_code=payload.otp_code,
-        purpose="register",
-        ip_address=ip_address,
+        email=str(payload.email), otp_code=payload.otp_code, purpose="register", ip_address=ip_address
     )
 
     if otp.user_id is None:
@@ -175,8 +242,11 @@ async def verify_register_otp(
     await db.commit()
     await db.refresh(user)
 
+    # New user has no org yet — issue token without org context
     return await _issue_token_pair(user, db, token_cache)
 
+
+# ── Login ─────────────────────────────────────────────────────────────────────
 
 @router.post("/login", response_model=LoginPasswordResponse)
 async def login(
@@ -219,7 +289,9 @@ async def login(
             email=user.email,
         )
 
-    token_pair = await _issue_token_pair(user, db, token_cache)
+    # Resolve org context
+    org_id, org_role, orgs = await _resolve_org_for_user(user, db)
+    token_pair = await _issue_token_pair(user, db, token_cache, org_id=org_id, org_role=org_role)
 
     return LoginPasswordResponse(
         otp_required=False,
@@ -231,10 +303,12 @@ async def login(
         expires_at=token_pair.expires_at,
         token_type="bearer",
         user=token_pair.user,
+        requires_org_selection=org_id is None and len(orgs) > 1,
+        organizations=orgs if org_id is None else [],
     )
 
 
-@router.post("/login/verify-otp", response_model=TokenResponse)
+@router.post("/login/verify-otp", response_model=LoginPasswordResponse)
 async def verify_login_otp(
     payload: VerifyLoginOTPRequest,
     request: Request,
@@ -249,10 +323,7 @@ async def verify_login_otp(
     security_service = AuthSecurityService(db)
 
     otp = await security_service.verify_otp(
-        email=str(payload.email),
-        otp_code=payload.otp_code,
-        purpose="login",
-        ip_address=ip_address,
+        email=str(payload.email), otp_code=payload.otp_code, purpose="login", ip_address=ip_address
     )
 
     if otp.user_id is None:
@@ -261,7 +332,6 @@ async def verify_login_otp(
     user = await db.get(User, otp.user_id)
     if user is None:
         raise AuthError.user_not_found()
-
     if not user.is_active:
         raise AuthError.account_inactive()
 
@@ -269,8 +339,110 @@ async def verify_login_otp(
     await db.commit()
     await db.refresh(user)
 
-    return await _issue_token_pair(user, db, token_cache)
+    org_id, org_role, orgs = await _resolve_org_for_user(user, db)
+    token_pair = await _issue_token_pair(user, db, token_cache, org_id=org_id, org_role=org_role)
 
+    return LoginPasswordResponse(
+        otp_required=False,
+        email_verification_required=False,
+        message="Login successful.",
+        email=user.email,
+        access_token=token_pair.access_token,
+        refresh_token=token_pair.refresh_token,
+        expires_at=token_pair.expires_at,
+        token_type="bearer",
+        user=token_pair.user,
+        requires_org_selection=org_id is None and len(orgs) > 1,
+        organizations=orgs if org_id is None else [],
+    )
+
+
+# ── Organization selection ────────────────────────────────────────────────────
+
+@router.get("/my-organizations")
+async def my_organizations(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return all organizations the current user belongs to."""
+    _, _, orgs = await _resolve_org_for_user(current_user, db)
+    return {"organizations": orgs}
+
+
+@router.post("/select-organization/{org_id}", response_model=TokenResponse)
+async def select_organization(
+    org_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    token_cache: TokenCache = Depends(get_token_cache),
+):
+    """Issue a new org-scoped token pair for the given organization."""
+    result = await db.execute(
+        select(Organization).where(Organization.id == org_id, Organization.is_active.is_(True))
+    )
+    org = result.scalar_one_or_none()
+    if org is None:
+        raise AppException(_ORG_NOT_FOUND)
+
+    result = await db.execute(
+        select(OrganizationMembership).where(
+            OrganizationMembership.organization_id == org_id,
+            OrganizationMembership.user_id == current_user.id,
+            OrganizationMembership.is_active.is_(True),
+        )
+    )
+    membership = result.scalar_one_or_none()
+    if membership is None:
+        raise AppException(_NOT_ORG_MEMBER)
+
+    return await _issue_token_pair(current_user, db, token_cache, org_id=org_id, org_role=membership.role)
+
+
+# ── Accept invitation ─────────────────────────────────────────────────────────
+
+@router.post("/accept-invitation", response_model=TokenResponse)
+async def accept_invitation(
+    payload: AcceptInvitationRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    token_cache: TokenCache = Depends(get_token_cache),
+):
+    org_repo = OrganizationRepository(db)
+    invitation = await org_repo.get_invitation_by_token(payload.token)
+
+    if invitation is None:
+        raise AppException(_INVITATION_NOT_FOUND)
+
+    if invitation.accepted_at is not None:
+        raise AppException(_INVITATION_ACCEPTED)
+
+    now = datetime.now(timezone.utc)
+    expires_at = invitation.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at < now:
+        raise AppException(_INVITATION_EXPIRED)
+
+    # Check if already a member
+    existing = await org_repo.get_membership(invitation.organization_id, current_user.id)
+    if existing is None or not existing.is_active:
+        membership = await org_repo.add_member(
+            invitation.organization_id, current_user.id, invitation.role
+        )
+    else:
+        membership = existing
+
+    await org_repo.accept_invitation(invitation)
+    await db.commit()
+
+    return await _issue_token_pair(
+        current_user, db, token_cache,
+        org_id=invitation.organization_id,
+        org_role=membership.role,
+    )
+
+
+# ── Token management ──────────────────────────────────────────────────────────
 
 @router.post("/token-refresh", response_model=TokenResponse)
 async def refresh_access_token(
@@ -294,7 +466,6 @@ async def refresh_access_token(
         raise TokenError.invalid()
 
     if stored.is_revoked:
-        # Refresh token reuse detected — terminate all sessions for this user
         await token_repo.revoke_all_for_user(int(user_id))
         await token_cache.revoke_all_user_tokens(user_id)
         await db.commit()
@@ -303,23 +474,31 @@ async def refresh_access_token(
     expires_at = stored.expires_at
     if expires_at.tzinfo is None:
         expires_at = expires_at.replace(tzinfo=timezone.utc)
-
     if expires_at <= datetime.now(timezone.utc):
         raise TokenError.expired()
 
     user = await db.get(User, int(user_id))
     if user is None:
         raise AuthError.user_not_found()
-
     if not user.is_active:
         raise AuthError.account_inactive()
 
-    # Rotate: revoke old token, issue new pair
     await token_repo.revoke(token_hash)
+
+    # Preserve the org context from the old token if available
+    # (The client must re-call select-organization if the org context is lost)
+    org_id_raw = payload.get("org_id")
+    org_role = payload.get("org_role")
+    try:
+        org_id = uuid.UUID(str(org_id_raw)) if org_id_raw else None
+    except (ValueError, AttributeError):
+        org_id = None
 
     access_token, _jti, exp = create_access_token(
         subject=str(user.id),
-        extra_claims={"email": user.email, "role": user.role},
+        extra_claims={"email": user.email},
+        org_id=org_id,
+        org_role=org_role,
     )
     new_refresh_str, new_hash, new_exp = create_refresh_token(subject=str(user.id))
     await token_repo.save(
@@ -333,7 +512,6 @@ async def refresh_access_token(
         access_token=access_token,
         refresh_token=new_refresh_str,
         expires_at=exp,
-        token_type="bearer",
         user=UserRead.model_validate(user),
     )
 
@@ -361,33 +539,27 @@ async def logout(
         refresh_payload = decode_refresh_token(logout_request.refresh_token)
         if not refresh_payload:
             raise TokenError.invalid("Refresh token is invalid.")
-
         if refresh_payload.get("sub") != user_id:
             raise TokenError.invalid("Token mismatch.")
 
         refresh_hash = hash_token(logout_request.refresh_token)
         stored = await token_repo.get_by_hash(refresh_hash)
-
         if not stored:
             raise TokenError.invalid()
-
         if stored.is_revoked:
             raise TokenError.invalid("Refresh token already revoked.")
-
         await token_repo.revoke(refresh_hash)
 
     await db.commit()
-
     ttl = max(0, int(exp) - int(time.time()))
     await token_cache.blacklist_access_token(jti, ttl)
-
     return {"message": "Logged out successfully."}
 
 
+# ── Profile & OTP helpers ────────────────────────────────────────────────────
+
 @router.get("/me", response_model=AuthenticatedUserResponse)
-async def get_me(
-    current_user: User = Depends(get_current_user),
-):
+async def get_me(current_user: User = Depends(get_current_user)):
     return AuthenticatedUserResponse(user=UserRead.model_validate(current_user))
 
 
@@ -406,7 +578,6 @@ async def resend_otp(
 
     user_repo = UserRepository(db)
     user = await user_repo.get_by_email(str(payload.email))
-
     if user is None:
         raise AuthError.user_not_found()
 
@@ -421,7 +592,6 @@ async def resend_otp(
 
     security_service = AuthSecurityService(db)
     await security_service.create_and_send_otp(user=user, email=user.email, purpose=payload.purpose)
-
     return {"message": "OTP resent successfully.", "email": user.email, "purpose": payload.purpose}
 
 
@@ -437,12 +607,10 @@ async def forgot_password(
 
     user_repo = UserRepository(db)
     user = await user_repo.get_by_email(str(payload.email))
-
     if user is not None and user.is_active:
         security_service = AuthSecurityService(db)
         await security_service.create_and_send_otp(user=user, email=user.email, purpose="reset_password")
 
-    # Always return the same response to prevent user enumeration
     return {"message": "If that email is registered, an OTP has been sent.", "email": str(payload.email)}
 
 
@@ -460,10 +628,7 @@ async def reset_password(
     security_service = AuthSecurityService(db)
 
     otp = await security_service.verify_otp(
-        email=str(payload.email),
-        otp_code=payload.otp_code,
-        purpose="reset_password",
-        ip_address=ip_address,
+        email=str(payload.email), otp_code=payload.otp_code, purpose="reset_password", ip_address=ip_address
     )
 
     if otp.user_id is None:
@@ -475,5 +640,4 @@ async def reset_password(
 
     user.hashed_password = hash_password(payload.new_password)
     await db.commit()
-
     return {"message": "Password reset successful. You can now log in."}

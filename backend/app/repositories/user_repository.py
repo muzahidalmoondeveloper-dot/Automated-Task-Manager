@@ -1,7 +1,10 @@
+import uuid
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import hash_password
+from app.models.organization import OrganizationMembership
 from app.models.user import User
 from app.schemas.user import UserCreate, UserUpdate
 
@@ -76,3 +79,18 @@ class UserRepository:
     async def delete(self, user: User) -> None:
         await self.db.delete(user)
         await self.db.commit()
+
+    async def list_by_org(self, org_id: uuid.UUID) -> list[User]:
+        """Return all active users who are members of the given organization."""
+        stmt = (
+            select(User)
+            .join(OrganizationMembership, OrganizationMembership.user_id == User.id)
+            .where(
+                OrganizationMembership.organization_id == org_id,
+                OrganizationMembership.is_active.is_(True),
+                User.is_active.is_(True),
+            )
+            .order_by(User.full_name.asc())
+        )
+        result = await self.db.execute(stmt)
+        return list(result.scalars().unique().all())

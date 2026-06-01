@@ -87,8 +87,15 @@ def create_access_token(
     subject: str,
     expires_delta: timedelta | None = None,
     extra_claims: dict[str, Any] | None = None,
+    org_id: "uuid.UUID | None" = None,
+    org_role: str | None = None,
 ) -> tuple[str, str, int]:
-    """Return (encoded_token, jti, exp_unix_timestamp)."""
+    """Return (encoded_token, jti, exp_unix_timestamp).
+
+    Pass org_id + org_role to issue an organization-scoped token.
+    Omit both to issue a token with no org context (e.g. immediately after
+    registration, before the user has selected or created an org).
+    """
     if expires_delta is None:
         expires_delta = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
 
@@ -104,6 +111,11 @@ def create_access_token(
         "jti": jti,
         "type": "access",
     }
+
+    if org_id is not None:
+        payload["org_id"] = str(org_id)
+    if org_role is not None:
+        payload["org_role"] = org_role
 
     if extra_claims:
         payload.update(extra_claims)

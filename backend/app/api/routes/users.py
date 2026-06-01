@@ -1,178 +1,60 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi import status as http_status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
+from app.core.auth_errors import AppException, AuthError, ErrorDef
 from app.core.database import get_db
-from app.core.dependencies import (
-    get_current_user,
-    require_admin,
-    require_admin_or_team_manager,
-)
-from app.core.roles import ADMIN, TEAM_MANAGER, TEAM_MEMBER
-from app.models.team import Team
-from app.models.task import Task
-from app.models.project import Project
+from app.core.dependencies import get_current_user
+from app.core.tenant import TenantContext, get_tenant_context, require_org_admin, require_org_owner
 from app.models.user import User
-from app.models import TeamMembership
 from app.repositories.user_repository import UserRepository
 from app.schemas.user import UserCreate, UserRead, UserUpdate
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
+_USER_NOT_FOUND = ErrorDef(code="USER_NOT_FOUND", status=http_status.HTTP_404_NOT_FOUND, message="User not found.")
+_EMAIL_EXISTS = ErrorDef(code="EMAIL_EXISTS", status=http_status.HTTP_409_CONFLICT, message="A user with this email already exists.")
+_CANNOT_DELETE_SELF = ErrorDef(code="CANNOT_DELETE_SELF", status=http_status.HTTP_400_BAD_REQUEST, message="You cannot delete your own account.")
+
 
 @router.get("/me", response_model=UserRead)
-async def read_current_user(
-    current_user: User = Depends(get_current_user),
-):
+async def read_current_user(current_user: User = Depends(get_current_user)):
     return UserRead.model_validate(current_user)
-
-
-async def get_managed_teams_for_user(
-    db: AsyncSession,
-    manager_id: int,
-) -> list[Team]:
-    result = await db.execute(
-        select(Team)
-        .where(Team.team_manager_id == manager_id)
-        .options(
-            selectinload(Team.memberships).selectinload(TeamMembership.user),
-            selectinload(Team.team_manager),
-        )
-        .order_by(Team.name.asc())
-    )
-    return list(result.scalars().unique().all())
-
-
-async def add_user_to_team_if_missing(
-    db: AsyncSession,
-    *,
-    team_id: int,
-    user_id: int,
-) -> None:
-    existing_result = await db.execute(
-        select(TeamMembership).where(
-            TeamMembership.team_id == team_id,
-            TeamMembership.user_id == user_id,
-        )
-    )
-
-    existing_membership = existing_result.scalar_one_or_none()
-
-    if existing_membership:
-        return
-
-    db.add(
-        TeamMembership(
-            team_id=team_id,
-            user_id=user_id,
-        )
-    )
 
 
 @router.get("", response_model=list[UserRead])
 async def list_users(
+    tenant: TenantContext = Depends(require_org_admin),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin_or_team_manager),
 ):
+    """List all active users in the current organization."""
     user_repo = UserRepository(db)
-
-    if current_user.role == ADMIN:
-        users = await user_repo.list_all()
-        return [UserRead.model_validate(user) for user in users]
-
-    managed_teams = await get_managed_teams_for_user(db, current_user.id)
-
-    if not managed_teams:
-        return []
-
-    seen_ids: set[int] = set()
-    members: list[User] = []
-    for team in managed_teams:
-        for membership in team.memberships:
-            if (
-                membership.user is not None
-                and membership.user.role == TEAM_MEMBER
-                and membership.user.id not in seen_ids
-            ):
-                seen_ids.add(membership.user.id)
-                members.append(membership.user)
-
-    return [UserRead.model_validate(u) for u in members]
+    users = await user_repo.list_by_org(tenant.organization_id)
+    return [UserRead.model_validate(u) for u in users]
 
 
-@router.get("/team-managers", response_model=list[UserRead])
-async def list_team_managers(
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_admin_or_team_manager),
-):
-    user_repo = UserRepository(db)
-    users = await user_repo.list_by_roles([TEAM_MANAGER])
-    return [UserRead.model_validate(user) for user in users]
-
-
-@router.post("", response_model=UserRead, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=UserRead, status_code=http_status.HTTP_201_CREATED)
 async def create_user(
     payload: UserCreate,
+    tenant: TenantContext = Depends(require_org_admin),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin_or_team_manager),
 ):
+    """Create a new user and automatically add them to the current organization."""
     user_repo = UserRepository(db)
 
-    if current_user.role == TEAM_MANAGER and payload.role != TEAM_MEMBER:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Team Managers can only create Team Members.",
-        )
-
-    existing_user = await user_repo.get_by_email(payload.email)
-
-    if existing_user:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="A user with this email already exists.",
-        )
-
-    managed_team = None
-
-    if current_user.role == TEAM_MANAGER:
-        managed_teams = await get_managed_teams_for_user(db, current_user.id)
-
-        if not managed_teams:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="You are not assigned as manager of any team.",
-            )
-
-        if len(managed_teams) == 1:
-            managed_team = managed_teams[0]
-        else:
-            if payload.managed_team_id is None:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="You manage multiple teams. Please specify which team to add the user to.",
-                )
-            managed_team = next(
-                (t for t in managed_teams if t.id == payload.managed_team_id),
-                None,
-            )
-            if managed_team is None:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="You do not manage the specified team.",
-                )
+    existing = await user_repo.get_by_email(payload.email)
+    if existing:
+        raise AppException(_EMAIL_EXISTS)
 
     user = await user_repo.create(payload)
 
-    if current_user.role == TEAM_MANAGER and managed_team is not None:
-        await add_user_to_team_if_missing(
-            db,
-            team_id=managed_team.id,
-            user_id=user.id,
-        )
-
-        await db.commit()
-        await db.refresh(user)
+    # Auto-add new user to this organization as a member
+    from app.repositories.organization_repository import OrganizationRepository
+    from app.core.org_roles import ORG_MEMBER
+    org_repo = OrganizationRepository(db)
+    await org_repo.add_member(tenant.organization_id, user.id, ORG_MEMBER)
+    await db.commit()
+    await db.refresh(user)
 
     return UserRead.model_validate(user)
 
@@ -181,109 +63,35 @@ async def create_user(
 async def update_user(
     user_id: int,
     payload: UserUpdate,
+    tenant: TenantContext = Depends(require_org_admin),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin),
 ):
     user_repo = UserRepository(db)
     user = await user_repo.get_by_id(user_id)
-
     if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found.",
-        )
+        raise AppException(_USER_NOT_FOUND)
 
     if payload.email and payload.email.lower().strip() != user.email:
-        existing_user = await user_repo.get_by_email(payload.email)
+        if await user_repo.get_by_email(payload.email):
+            raise AppException(_EMAIL_EXISTS)
 
-        if existing_user:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="A user with this email already exists.",
-            )
-
-    updated_user = await user_repo.update(user, payload)
-    return UserRead.model_validate(updated_user)
+    updated = await user_repo.update(user, payload)
+    return UserRead.model_validate(updated)
 
 
-@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{user_id}", status_code=http_status.HTTP_204_NO_CONTENT)
 async def delete_user(
     user_id: int,
+    tenant: TenantContext = Depends(require_org_owner),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin),
 ):
-    if user_id == current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="You cannot delete your own account.",
-        )
+    if user_id == tenant.user.id:
+        raise AppException(_CANNOT_DELETE_SELF)
 
     user_repo = UserRepository(db)
     user = await user_repo.get_by_id(user_id)
-
     if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found.",
-        )
-
-    managed_teams_result = await db.execute(
-        select(Team).where(Team.team_manager_id == user_id)
-    )
-    managed_teams = list(managed_teams_result.scalars().all())
-
-    if managed_teams:
-        team_names = ", ".join(f"'{t.name}'" for t in managed_teams)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                f"This user is the manager of team(s) {team_names}. "
-                "Reassign the team manager before deleting this user."
-            ),
-        )
-
-    created_team_result = await db.execute(
-        select(Team).where(Team.created_by_id == user_id)
-    )
-    created_team = created_team_result.scalar_one_or_none()
-
-    if created_team:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                f"This user created team '{created_team.name}'. "
-                "Delete or reassign this team before deleting this user."
-            ),
-        )
-
-    created_project_result = await db.execute(
-        select(Project).where(Project.created_by_id == user_id)
-    )
-    created_project = created_project_result.scalar_one_or_none()
-
-    if created_project:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                f"This user created project '{created_project.name}'. "
-                "Delete or reassign this project before deleting this user."
-            ),
-        )
-
-    created_task_result = await db.execute(
-        select(Task).where(Task.created_by_id == user_id)
-    )
-    created_task = created_task_result.scalar_one_or_none()
-
-    if created_task:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                f"This user created task '{created_task.name}'. "
-                "Delete or reassign this task before deleting this user."
-            ),
-        )
+        raise AppException(_USER_NOT_FOUND)
 
     await user_repo.delete(user)
-
     return None

@@ -1,7 +1,8 @@
+import uuid
 from datetime import date, datetime
 from typing import Optional
 
-from sqlalchemy import Date, DateTime, Float, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import Date, DateTime, Float, ForeignKey, Integer, JSON, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
@@ -17,6 +18,7 @@ class KPI(Base):
     icon: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     team_id: Mapped[int] = mapped_column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
     owner_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    organization_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True, index=True)
     rock_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("rocks.id", ondelete="SET NULL"), nullable=True)
     kpi_group: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     supported_views: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=lambda: ["weekly", "monthly", "quarterly", "yearly"])

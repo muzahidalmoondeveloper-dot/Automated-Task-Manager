@@ -3,9 +3,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.dependencies import get_current_user
+from app.core.tenant import TenantContext, get_tenant_context
 from app.models.rock import Milestone, Rock
-from app.models.user import User
 from app.schemas.rock import RockCreate, RockOut, RockUpdate
 
 router = APIRouter(prefix="/teams/{team_id}/rocks", tags=["rocks"])
@@ -15,7 +14,7 @@ router = APIRouter(prefix="/teams/{team_id}/rocks", tags=["rocks"])
 async def list_rocks(
     team_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
     result = await db.execute(
         select(Rock).where(Rock.team_id == team_id).order_by(Rock.created_at.desc())
@@ -28,7 +27,7 @@ async def create_rock(
     team_id: int,
     payload: RockCreate,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
     milestones_data = payload.milestones or []
     rock_data = payload.model_dump(exclude={"milestones"})
@@ -48,7 +47,7 @@ async def update_rock(
     rock_id: int,
     payload: RockUpdate,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
     result = await db.execute(
         select(Rock).where(Rock.id == rock_id, Rock.team_id == team_id)
@@ -79,7 +78,7 @@ async def delete_rock(
     team_id: int,
     rock_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
     result = await db.execute(
         select(Rock).where(Rock.id == rock_id, Rock.team_id == team_id)

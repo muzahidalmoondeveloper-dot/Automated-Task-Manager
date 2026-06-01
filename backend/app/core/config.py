@@ -20,9 +20,9 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
 
-    BACKEND_BASE_URL: str = "https://automated-task-manager.onrender.com"
-    FRONTEND_BASE_URL: str = "https://automated-task-manager.onrender.com"
-    CORS_ORIGINS: str = "https://automated-task-manager.onrender.com"
+    BACKEND_BASE_URL: str
+    FRONTEND_BASE_URL: str
+    CORS_ORIGINS: str
 
 
     GOOGLE_CLIENT_ID: str | None = None

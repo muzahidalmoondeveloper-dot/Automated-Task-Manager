@@ -1,11 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.auth_errors import AppException, ErrorDef
 from app.core.database import get_db
-from app.core.dependencies import require_admin, require_admin_or_team_manager
-from app.core.roles import ADMIN, TEAM_MANAGER
+from app.core.org_roles import ORG_MANAGEMENT_ROLES
+from app.core.tenant import TenantContext, get_tenant_context, require_org_admin
 from app.models.team import Team
-from app.models.user import User
 from app.repositories.team_repository import TeamRepository
 from app.repositories.user_repository import UserRepository
 from app.schemas.team import TeamCreate, TeamDetailRead, TeamRead, TeamUpdate
@@ -13,8 +13,12 @@ from app.schemas.user import UserRead
 
 router = APIRouter(prefix="/teams", tags=["Teams"])
 
+_TEAM_NOT_FOUND = ErrorDef(code="TEAM_NOT_FOUND", status=status.HTTP_404_NOT_FOUND, message="Team not found.")
+_INVALID_MANAGER = ErrorDef(code="INVALID_TEAM_MANAGER", status=status.HTTP_400_BAD_REQUEST, message="Selected team manager is not a valid org member.")
+_PLAN_LIMIT_TEAMS = ErrorDef(code="PLAN_LIMIT_EXCEEDED", status=status.HTTP_402_PAYMENT_REQUIRED, message="Your plan's team limit has been reached. Please upgrade.")
 
-def serialize_team(team: Team) -> TeamDetailRead:
+
+def _serialize(team: Team) -> TeamDetailRead:
     return TeamDetailRead(
         id=team.id,
         name=team.name,
@@ -25,138 +29,82 @@ def serialize_team(team: Team) -> TeamDetailRead:
         updated_at=team.updated_at,
         team_manager=UserRead.model_validate(team.team_manager),
         members=[
-            UserRead.model_validate(membership.user)
-            for membership in team.memberships
-            if membership.user is not None
+            UserRead.model_validate(m.user) for m in team.memberships if m.user is not None
         ],
     )
 
 
 @router.get("", response_model=list[TeamDetailRead])
-async def list_teams(
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin_or_team_manager),
-):
-    repository = TeamRepository(db)
-
-    if current_user.role == ADMIN:
-        teams = await repository.list_all()
-    elif current_user.role == TEAM_MANAGER:
-        all_teams = await repository.list_all()
-        teams = [
-            team
-            for team in all_teams
-            if team.team_manager_id == current_user.id
-        ]
+async def list_teams(tenant: TenantContext = Depends(get_tenant_context)):
+    repo = TeamRepository(tenant.db, tenant.organization_id)
+    if tenant.is_admin_or_owner:
+        teams = await repo.list_all()
     else:
-        teams = []
-
-    return [serialize_team(team) for team in teams]
+        teams = await repo.list_for_manager(tenant.user.id)
+    return [_serialize(t) for t in teams]
 
 
 @router.post("", response_model=TeamDetailRead, status_code=status.HTTP_201_CREATED)
 async def create_team(
     payload: TeamCreate,
+    tenant: TenantContext = Depends(require_org_admin),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin),
 ):
+    limits = tenant.plan_limits
+    if limits.max_teams != -1:
+        repo_check = TeamRepository(db, tenant.organization_id)
+        teams = await repo_check.list_all()
+        if len(teams) >= limits.max_teams:
+            raise AppException(_PLAN_LIMIT_TEAMS, details={"limit": limits.max_teams, "resource": "teams"})
+
     user_repo = UserRepository(db)
-
     manager = await user_repo.get_by_id(payload.team_manager_id)
-
-    if manager is None or manager.role != TEAM_MANAGER:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Selected team manager is invalid.",
-        )
-
+    if manager is None:
+        raise AppException(_INVALID_MANAGER)
 
     for member_id in payload.member_ids:
         member = await user_repo.get_by_id(member_id)
-
         if member is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid member id: {member_id}",
-            )
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid member id: {member_id}")
 
-    repository = TeamRepository(db)
-    team = await repository.create(payload, created_by_id=current_user.id)
-
-    return serialize_team(team)
+    repo = TeamRepository(db, tenant.organization_id)
+    team = await repo.create(payload, created_by_id=tenant.user.id)
+    return _serialize(team)
 
 
 @router.get("/{team_id}", response_model=TeamDetailRead)
-async def get_team(
-    team_id: int,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin_or_team_manager),
-):
-    repository = TeamRepository(db)
-    team = await repository.get_by_id(team_id)
-
+async def get_team(team_id: int, tenant: TenantContext = Depends(get_tenant_context)):
+    repo = TeamRepository(tenant.db, tenant.organization_id)
+    team = await repo.get_by_id(team_id)
     if team is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Team not found.",
-        )
-
-    if current_user.role == TEAM_MANAGER and team.team_manager_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You can only view your own teams.",
-        )
-
-    return serialize_team(team)
+        raise AppException(_TEAM_NOT_FOUND)
+    return _serialize(team)
 
 
 @router.patch("/{team_id}", response_model=TeamDetailRead)
 async def update_team(
     team_id: int,
     payload: TeamUpdate,
+    tenant: TenantContext = Depends(require_org_admin),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin),
 ):
-    repository = TeamRepository(db)
-    team = await repository.get_by_id(team_id)
-
+    repo = TeamRepository(db, tenant.organization_id)
+    team = await repo.get_by_id(team_id)
     if team is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Team not found.",
-        )
-
-    if current_user.role == TEAM_MANAGER and team.team_manager_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You can only update your own teams.",
-        )
-
-    updated_team = await repository.update(team, payload)
-
-    return serialize_team(updated_team)
+        raise AppException(_TEAM_NOT_FOUND)
+    updated = await repo.update(team, payload)
+    return _serialize(updated)
 
 
 @router.delete("/{team_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_team(
     team_id: int,
+    tenant: TenantContext = Depends(require_org_admin),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin),
 ):
-    repository = TeamRepository(db)
-    team = await repository.get_by_id(team_id)
-
+    repo = TeamRepository(db, tenant.organization_id)
+    team = await repo.get_by_id(team_id)
     if team is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Team not found.",
-        )
-
-    if current_user.role == TEAM_MANAGER and team.team_manager_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You can only delete your own teams.",
-        )
-
-    await repository.delete(team)
+        raise AppException(_TEAM_NOT_FOUND)
+    await repo.delete(team)
     return None
