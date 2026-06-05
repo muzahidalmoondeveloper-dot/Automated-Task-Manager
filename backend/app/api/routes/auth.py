@@ -1,102 +1,226 @@
+import re
+import secrets
+import time
+import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Request
+from redis.asyncio import Redis
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.access_token_bearer import AccessTokenBearer
+from app.core.auth_errors import AppException, AuthError, ErrorDef, TokenError
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
-from app.core.roles import TEAM_MEMBER
-from app.core.security import create_access_token, hash_password, verify_password
+from app.core.org_roles import ORG_OWNER
+from app.core.rate_limiter import RateLimiter, get_rate_limiter
+from app.core.redis_client import get_redis
+from app.core.roles import ADMIN, TEAM_MEMBER
+from app.core.security import (
+    create_access_token,
+    create_refresh_token,
+    decode_refresh_token,
+    hash_password,
+    hash_token,
+    validate_password_strength,
+    verify_password,
+)
+from app.core.token_cache import TokenCache, get_token_cache
+from app.models.organization import Organization, OrganizationMembership
 from app.models.user import User
+from app.repositories.organization_repository import OrganizationRepository
+from app.repositories.refresh_token_repository import RefreshTokenRepository
 from app.repositories.user_repository import UserRepository
 from app.schemas.auth import (
+    AcceptInvitationRequest,
     AuthenticatedUserResponse,
     ForgotPasswordRequest,
     LoginPasswordResponse,
     LoginRequest,
+    LogoutRequest,
+    RefreshTokenRequest,
     ResendOTPRequest,
     ResetPasswordRequest,
     TokenResponse,
     VerifyLoginOTPRequest,
     VerifyRegisterOTPRequest,
 )
+from app.schemas.organization import OrgSummary
 from app.schemas.user import UserCreate, UserRead
-from app.services.auth_security_service import (
-    AuthSecurityService,
-    get_client_ip,
-)
+from app.services.auth_security_service import AuthSecurityService, get_client_ip
+from fastapi import status as http_status
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
 
-def create_user_token_response(user: User) -> TokenResponse:
-    access_token = create_access_token(
+def _slugify_name(name: str) -> str:
+    """Convert a display name to a URL-safe slug."""
+    s = name.lower().strip()
+    s = re.sub(r"[^\w\s-]", "", s)
+    s = re.sub(r"[\s_]+", "-", s)
+    s = re.sub(r"-+", "-", s).strip("-")
+    return (s or "org")[:80]
+
+_INVITATION_EXPIRED = ErrorDef(
+    code="INVITATION_EXPIRED",
+    status=http_status.HTTP_400_BAD_REQUEST,
+    message="Invitation has expired.",
+)
+_INVITATION_ACCEPTED = ErrorDef(
+    code="INVITATION_ALREADY_ACCEPTED",
+    status=http_status.HTTP_400_BAD_REQUEST,
+    message="Invitation has already been accepted.",
+)
+_INVITATION_NOT_FOUND = ErrorDef(
+    code="INVITATION_NOT_FOUND",
+    status=http_status.HTTP_404_NOT_FOUND,
+    message="Invitation not found.",
+)
+_ORG_NOT_FOUND = ErrorDef(
+    code="ORG_NOT_FOUND",
+    status=http_status.HTTP_404_NOT_FOUND,
+    message="Organization not found.",
+)
+_NOT_ORG_MEMBER = ErrorDef(
+    code="NOT_ORG_MEMBER",
+    status=http_status.HTTP_403_FORBIDDEN,
+    message="You are not a member of this organization.",
+)
+
+
+async def _issue_token_pair(
+    user: User,
+    db: AsyncSession,
+    token_cache: TokenCache,
+    org_id: uuid.UUID | None = None,
+    org_role: str | None = None,
+) -> TokenResponse:
+    """Issue access + refresh tokens, persist the refresh token."""
+    access_token, _jti, exp = create_access_token(
         subject=str(user.id),
-        extra_claims={
-            "email": user.email,
-            "role": user.role,
-        },
+        extra_claims={"email": user.email},
+        org_id=org_id,
+        org_role=org_role,
     )
+    refresh_str, refresh_hash, refresh_exp = create_refresh_token(subject=str(user.id))
+
+    token_repo = RefreshTokenRepository(db)
+    await token_repo.save(
+        token_hash=refresh_hash,
+        user_id=user.id,
+        expires_at=datetime.fromtimestamp(refresh_exp, tz=timezone.utc),
+    )
+    await db.commit()
+    await token_cache.clear_user_access_token_blacklist(str(user.id))
 
     return TokenResponse(
         access_token=access_token,
+        refresh_token=refresh_str,
+        expires_at=exp,
         user=UserRead.model_validate(user),
     )
 
+
+async def _resolve_org_for_user(
+    user: User,
+    db: AsyncSession,
+) -> tuple[uuid.UUID | None, str | None, list[OrgSummary]]:
+    """Return (org_id, org_role, all_orgs).
+
+    If the user has exactly one org → auto-select it.
+    If multiple or none → return None so the caller can prompt selection.
+    """
+    result = await db.execute(
+        select(Organization, OrganizationMembership)
+        .join(OrganizationMembership, OrganizationMembership.organization_id == Organization.id)
+        .where(
+            OrganizationMembership.user_id == user.id,
+            OrganizationMembership.is_active.is_(True),
+            Organization.is_active.is_(True),
+        )
+    )
+    rows = result.all()
+
+    orgs = [
+        OrgSummary(
+            id=org.id,
+            name=org.name,
+            slug=org.slug,
+            plan=org.plan,
+            role=membership.role,
+        )
+        for org, membership in rows
+    ]
+
+    if len(orgs) == 1:
+        org, membership = rows[0]
+        return org.id, membership.role, orgs
+
+    return None, None, orgs
+
+
+# ── Registration ──────────────────────────────────────────────────────────────
 
 @router.post("/register")
 async def register(
     payload: UserCreate,
     request: Request,
     db: AsyncSession = Depends(get_db),
+    rate_limiter: RateLimiter = Depends(get_rate_limiter),
+    redis: Redis = Depends(get_redis),
 ):
-    ip_address = get_client_ip(request)
-    security_service = AuthSecurityService(db)
+    if await rate_limiter.is_rate_limited("register", request):
+        raise AuthError.rate_limited()
 
-    await security_service.check_ip_lock(ip_address)
+    pwd_check = validate_password_strength(payload.password)
+    if not pwd_check["valid"]:
+        raise AuthError.invalid_password(pwd_check["errors"])
 
-    user_repo = UserRepository(db)
+    lock_key = f"register_lock:{payload.email.lower().strip()}"
+    lock = redis.lock(lock_key, timeout=10)
 
-    existing_user = await user_repo.get_by_email(payload.email)
+    try:
+        acquired = await lock.acquire(blocking=True, blocking_timeout=5)
+        if not acquired:
+            raise AuthError.rate_limited("Registration in progress. Please try again.")
 
-    if existing_user:
-        # User registered but never verified — resend OTP instead of erroring
-        if existing_user.email_verified_at is None and not existing_user.is_active:
-            await security_service.create_and_send_otp(
-                user=existing_user,
-                email=existing_user.email,
-                purpose="register",
-            )
-            return {
-                "message": "You have already registered. A new OTP has been sent to your email.",
-                "email": existing_user.email,
-            }
-        await security_service.record_failed_attempt(ip_address)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered.",
-        )
+        user_repo = UserRepository(db)
+        existing_user = await user_repo.get_by_email(payload.email)
 
-    payload.role = TEAM_MEMBER  # public registration always creates team members
+        if existing_user:
+            if existing_user.email_verified_at is None and not existing_user.is_active:
+                security_service = AuthSecurityService(db)
+                await security_service.create_and_send_otp(
+                    user=existing_user, email=existing_user.email, purpose="register"
+                )
+                return {
+                    "message": "You have already registered. A new OTP has been sent to your email.",
+                    "email": existing_user.email,
+                }
+            raise AuthError.email_exists()
 
-    user = await user_repo.create(payload)
+        payload.role = TEAM_MEMBER
+        user = await user_repo.create(payload)
+        user.email_verified_at = None
+        user.is_active = False
+        await db.commit()
+        await db.refresh(user)
 
-    user.email_verified_at = None
-    user.is_active = False
+        security_service = AuthSecurityService(db)
+        await security_service.create_and_send_otp(user=user, email=user.email, purpose="register")
 
-    await db.commit()
-    await db.refresh(user)
-
-    await security_service.create_and_send_otp(
-        user=user,
-        email=user.email,
-        purpose="register",
-    )
-
-    return {
-        "message": "Registration successful. Please verify the OTP sent to your email.",
-        "email": user.email,
-    }
+        return {
+            "message": "Registration successful. Please verify the OTP sent to your email.",
+            "email": user.email,
+        }
+    except Exception:
+        raise
+    finally:
+        try:
+            await lock.release()
+        except Exception:
+            pass
 
 
 @router.post("/register/verify-otp", response_model=TokenResponse)
@@ -104,185 +228,370 @@ async def verify_register_otp(
     payload: VerifyRegisterOTPRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
+    token_cache: TokenCache = Depends(get_token_cache),
+    rate_limiter: RateLimiter = Depends(get_rate_limiter),
 ):
+    if await rate_limiter.is_rate_limited("verify_otp", request):
+        raise AuthError.rate_limited()
+
     ip_address = get_client_ip(request)
     security_service = AuthSecurityService(db)
 
     otp = await security_service.verify_otp(
-        email=str(payload.email),
-        otp_code=payload.otp_code,
-        purpose="register",
-        ip_address=ip_address,
+        email=str(payload.email), otp_code=payload.otp_code, purpose="register", ip_address=ip_address
     )
 
     if otp.user_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid OTP user.",
-        )
+        raise AuthError.invalid_otp()
 
     user = await db.get(User, otp.user_id)
-
     if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found.",
-        )
+        raise AuthError.user_not_found()
 
     user.email_verified_at = datetime.now(timezone.utc)
     user.is_active = True
+    user.role = ADMIN  # owner has full app-level access
+    await db.flush()
+
+    # Auto-create a personal organization and make the registrant its owner
+    org_repo = OrganizationRepository(db)
+    base_slug = _slugify_name(user.full_name)
+    slug = base_slug
+    for _ in range(10):
+        if not await org_repo.slug_exists(slug):
+            break
+        slug = f"{base_slug}-{secrets.token_hex(3)}"
+
+    org = await org_repo.create(
+        name=f"{user.full_name}'s Organization",
+        slug=slug,
+        owner_id=user.id,
+        plan="free",
+    )
+    await org_repo.add_member(org.id, user.id, role=ORG_OWNER)
+    await org_repo.get_or_create_subscription(org.id, plan="free")
 
     await db.commit()
     await db.refresh(user)
 
-    return create_user_token_response(user)
+    return await _issue_token_pair(user, db, token_cache, org_id=org.id, org_role=ORG_OWNER)
 
+
+# ── Login ─────────────────────────────────────────────────────────────────────
 
 @router.post("/login", response_model=LoginPasswordResponse)
 async def login(
     payload: LoginRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
+    token_cache: TokenCache = Depends(get_token_cache),
+    rate_limiter: RateLimiter = Depends(get_rate_limiter),
 ):
-    ip_address = get_client_ip(request)
-    security_service = AuthSecurityService(db)
-
-    await security_service.check_ip_lock(ip_address)
+    if await rate_limiter.is_rate_limited("login", request):
+        raise AuthError.rate_limited()
 
     user_repo = UserRepository(db)
     user = await user_repo.get_by_email(payload.email)
 
-    if user is None:
-        await security_service.record_failed_attempt(ip_address)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password.",
-        )
+    if user is None or not verify_password(payload.password, user.hashed_password):
+        raise AuthError.invalid_credentials()
 
-    if not verify_password(payload.password, user.hashed_password):
-        await security_service.record_failed_attempt(ip_address)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password.",
-        )
-
-    # Check email verification before is_active — unverified users should be
-    # redirected to OTP, not told their account is inactive.
     if user.email_verified_at is None:
-        await security_service.create_and_send_otp(
-            user=user,
-            email=user.email,
-            purpose="register",
-        )
-
+        security_service = AuthSecurityService(db)
+        await security_service.create_and_send_otp(user=user, email=user.email, purpose="register")
         return LoginPasswordResponse(
             otp_required=False,
             email_verification_required=True,
             message="Your email is not verified. OTP sent to your email.",
             email=user.email,
-            access_token=None,
-            token_type="bearer",
-            user=None,
         )
 
     if not user.is_active:
-        await security_service.record_failed_attempt(ip_address)
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User account is inactive.",
-        )
+        raise AuthError.account_inactive()
 
-
-    await security_service.reset_failed_attempts(ip_address)
+    security_service = AuthSecurityService(db)
 
     if security_service.login_otp_required(user):
-        await security_service.create_and_send_otp(
-            user=user,
-            email=user.email,
-            purpose="login",
-        )
-
+        await security_service.create_and_send_otp(user=user, email=user.email, purpose="login")
         return LoginPasswordResponse(
             otp_required=True,
             email_verification_required=False,
             message="OTP sent to your email.",
             email=user.email,
-            access_token=None,
-            token_type="bearer",
-            user=None,
         )
 
-    access_token = create_access_token(
-        subject=str(user.id),
-        extra_claims={
-            "email": user.email,
-            "role": user.role,
-        },
-    )
+    # Resolve org context
+    org_id, org_role, orgs = await _resolve_org_for_user(user, db)
+    token_pair = await _issue_token_pair(user, db, token_cache, org_id=org_id, org_role=org_role)
 
     return LoginPasswordResponse(
         otp_required=False,
         email_verification_required=False,
         message="Login successful.",
         email=user.email,
-        access_token=access_token,
+        access_token=token_pair.access_token,
+        refresh_token=token_pair.refresh_token,
+        expires_at=token_pair.expires_at,
         token_type="bearer",
-        user=UserRead.model_validate(user),
+        user=token_pair.user,
+        requires_org_selection=org_id is None and len(orgs) > 1,
+        organizations=orgs if org_id is None else [],
     )
 
 
-@router.post("/login/verify-otp", response_model=TokenResponse)
+@router.post("/login/verify-otp", response_model=LoginPasswordResponse)
 async def verify_login_otp(
     payload: VerifyLoginOTPRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
+    token_cache: TokenCache = Depends(get_token_cache),
+    rate_limiter: RateLimiter = Depends(get_rate_limiter),
 ):
+    if await rate_limiter.is_rate_limited("verify_otp", request):
+        raise AuthError.rate_limited()
+
     ip_address = get_client_ip(request)
     security_service = AuthSecurityService(db)
 
     otp = await security_service.verify_otp(
-        email=str(payload.email),
-        otp_code=payload.otp_code,
-        purpose="login",
-        ip_address=ip_address,
+        email=str(payload.email), otp_code=payload.otp_code, purpose="login", ip_address=ip_address
     )
 
     if otp.user_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid OTP user.",
-        )
+        raise AuthError.invalid_otp()
 
     user = await db.get(User, otp.user_id)
-
     if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found.",
-        )
-
+        raise AuthError.user_not_found()
     if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User account is inactive.",
-        )
+        raise AuthError.account_inactive()
 
     user.last_login_otp_verified_at = datetime.now(timezone.utc)
-
     await db.commit()
     await db.refresh(user)
 
-    return create_user_token_response(user)
+    org_id, org_role, orgs = await _resolve_org_for_user(user, db)
+    token_pair = await _issue_token_pair(user, db, token_cache, org_id=org_id, org_role=org_role)
 
-
-@router.get("/me", response_model=AuthenticatedUserResponse)
-async def get_me(
-    current_user: User = Depends(get_current_user),
-):
-    return AuthenticatedUserResponse(
-        user=UserRead.model_validate(current_user),
+    return LoginPasswordResponse(
+        otp_required=False,
+        email_verification_required=False,
+        message="Login successful.",
+        email=user.email,
+        access_token=token_pair.access_token,
+        refresh_token=token_pair.refresh_token,
+        expires_at=token_pair.expires_at,
+        token_type="bearer",
+        user=token_pair.user,
+        requires_org_selection=org_id is None and len(orgs) > 1,
+        organizations=orgs if org_id is None else [],
     )
 
+
+# ── Organization selection ────────────────────────────────────────────────────
+
+@router.get("/my-organizations")
+async def my_organizations(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return all organizations the current user belongs to."""
+    _, _, orgs = await _resolve_org_for_user(current_user, db)
+    return {"organizations": orgs}
+
+
+@router.post("/select-organization/{org_id}", response_model=TokenResponse)
+async def select_organization(
+    org_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    token_cache: TokenCache = Depends(get_token_cache),
+):
+    """Issue a new org-scoped token pair for the given organization."""
+    result = await db.execute(
+        select(Organization).where(Organization.id == org_id, Organization.is_active.is_(True))
+    )
+    org = result.scalar_one_or_none()
+    if org is None:
+        raise AppException(_ORG_NOT_FOUND)
+
+    result = await db.execute(
+        select(OrganizationMembership).where(
+            OrganizationMembership.organization_id == org_id,
+            OrganizationMembership.user_id == current_user.id,
+            OrganizationMembership.is_active.is_(True),
+        )
+    )
+    membership = result.scalar_one_or_none()
+    if membership is None:
+        raise AppException(_NOT_ORG_MEMBER)
+
+    return await _issue_token_pair(current_user, db, token_cache, org_id=org_id, org_role=membership.role)
+
+
+# ── Accept invitation ─────────────────────────────────────────────────────────
+
+@router.post("/accept-invitation", response_model=TokenResponse)
+async def accept_invitation(
+    payload: AcceptInvitationRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    token_cache: TokenCache = Depends(get_token_cache),
+):
+    org_repo = OrganizationRepository(db)
+    invitation = await org_repo.get_invitation_by_token(payload.token)
+
+    if invitation is None:
+        raise AppException(_INVITATION_NOT_FOUND)
+
+    if invitation.accepted_at is not None:
+        raise AppException(_INVITATION_ACCEPTED)
+
+    now = datetime.now(timezone.utc)
+    expires_at = invitation.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at < now:
+        raise AppException(_INVITATION_EXPIRED)
+
+    # Check if already a member
+    existing = await org_repo.get_membership(invitation.organization_id, current_user.id)
+    if existing is None or not existing.is_active:
+        membership = await org_repo.add_member(
+            invitation.organization_id, current_user.id, invitation.role
+        )
+    else:
+        membership = existing
+
+    await org_repo.accept_invitation(invitation)
+    await db.commit()
+
+    return await _issue_token_pair(
+        current_user, db, token_cache,
+        org_id=invitation.organization_id,
+        org_role=membership.role,
+    )
+
+
+# ── Token management ──────────────────────────────────────────────────────────
+
+@router.post("/token-refresh", response_model=TokenResponse)
+async def refresh_access_token(
+    data: RefreshTokenRequest,
+    db: AsyncSession = Depends(get_db),
+    token_cache: TokenCache = Depends(get_token_cache),
+):
+    payload = decode_refresh_token(data.refresh_token)
+    if not payload:
+        raise TokenError.invalid()
+
+    user_id = payload.get("sub")
+    if not user_id:
+        raise TokenError.invalid("Invalid user ID in token.")
+
+    token_hash = hash_token(data.refresh_token)
+    token_repo = RefreshTokenRepository(db)
+    stored = await token_repo.get_by_hash(token_hash)
+
+    if not stored:
+        raise TokenError.invalid()
+
+    if stored.is_revoked:
+        await token_repo.revoke_all_for_user(int(user_id))
+        await token_cache.revoke_all_user_tokens(user_id)
+        await db.commit()
+        raise TokenError.revoked()
+
+    expires_at = stored.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at <= datetime.now(timezone.utc):
+        raise TokenError.expired()
+
+    user = await db.get(User, int(user_id))
+    if user is None:
+        raise AuthError.user_not_found()
+    if not user.is_active:
+        raise AuthError.account_inactive()
+
+    await token_repo.revoke(token_hash)
+
+    # Preserve the org context from the old token if available
+    # (The client must re-call select-organization if the org context is lost)
+    org_id_raw = payload.get("org_id")
+    org_role = payload.get("org_role")
+    try:
+        org_id = uuid.UUID(str(org_id_raw)) if org_id_raw else None
+    except (ValueError, AttributeError):
+        org_id = None
+
+    access_token, _jti, exp = create_access_token(
+        subject=str(user.id),
+        extra_claims={"email": user.email},
+        org_id=org_id,
+        org_role=org_role,
+    )
+    new_refresh_str, new_hash, new_exp = create_refresh_token(subject=str(user.id))
+    await token_repo.save(
+        token_hash=new_hash,
+        user_id=user.id,
+        expires_at=datetime.fromtimestamp(new_exp, tz=timezone.utc),
+    )
+    await db.commit()
+
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=new_refresh_str,
+        expires_at=exp,
+        user=UserRead.model_validate(user),
+    )
+
+
+@router.post("/logout")
+async def logout(
+    logout_request: LogoutRequest,
+    token_payload: dict = Depends(AccessTokenBearer()),
+    db: AsyncSession = Depends(get_db),
+    token_cache: TokenCache = Depends(get_token_cache),
+):
+    jti = token_payload.get("jti")
+    exp = token_payload.get("exp")
+    user_id = token_payload.get("sub")
+
+    if not jti or not exp or not user_id:
+        raise TokenError.invalid("Invalid token payload.")
+
+    token_repo = RefreshTokenRepository(db)
+
+    if logout_request.logout_all_devices:
+        await token_repo.revoke_all_for_user(int(user_id))
+        await token_cache.revoke_all_user_tokens(user_id)
+    else:
+        refresh_payload = decode_refresh_token(logout_request.refresh_token)
+        if not refresh_payload:
+            raise TokenError.invalid("Refresh token is invalid.")
+        if refresh_payload.get("sub") != user_id:
+            raise TokenError.invalid("Token mismatch.")
+
+        refresh_hash = hash_token(logout_request.refresh_token)
+        stored = await token_repo.get_by_hash(refresh_hash)
+        if not stored:
+            raise TokenError.invalid()
+        if stored.is_revoked:
+            raise TokenError.invalid("Refresh token already revoked.")
+        await token_repo.revoke(refresh_hash)
+
+    await db.commit()
+    ttl = max(0, int(exp) - int(time.time()))
+    await token_cache.blacklist_access_token(jti, ttl)
+    return {"message": "Logged out successfully."}
+
+
+# ── Profile & OTP helpers ────────────────────────────────────────────────────
+
+@router.get("/me", response_model=AuthenticatedUserResponse)
+async def get_me(current_user: User = Depends(get_current_user)):
+    return AuthenticatedUserResponse(user=UserRead.model_validate(current_user))
 
 
 @router.post("/resend-otp")
@@ -290,58 +599,31 @@ async def resend_otp(
     payload: ResendOTPRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
+    rate_limiter: RateLimiter = Depends(get_rate_limiter),
 ):
-    ip_address = get_client_ip(request)
-    security_service = AuthSecurityService(db)
-
-    await security_service.check_ip_lock(ip_address)
+    if await rate_limiter.is_rate_limited("resend_otp", request):
+        raise AuthError.rate_limited()
 
     if payload.purpose not in {"register", "login", "reset_password"}:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid OTP purpose.",
-        )
+        raise AuthError.otp_purpose_invalid()
 
     user_repo = UserRepository(db)
     user = await user_repo.get_by_email(str(payload.email))
-
     if user is None:
-        await security_service.record_failed_attempt(ip_address)
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found.",
-        )
+        raise AuthError.user_not_found()
 
     if payload.purpose == "register" and user.email_verified_at is not None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email is already verified.",
-        )
+        raise AuthError.email_already_verified()
 
     if payload.purpose == "login":
         if not user.is_active:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="User account is inactive.",
-            )
-
+            raise AuthError.account_inactive()
         if user.email_verified_at is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Please verify your email first.",
-            )
+            raise AuthError.email_not_verified()
 
-    await security_service.create_and_send_otp(
-        user=user,
-        email=user.email,
-        purpose=payload.purpose,
-    )
-
-    return {
-        "message": "OTP resent successfully.",
-        "email": user.email,
-        "purpose": payload.purpose,
-    }
+    security_service = AuthSecurityService(db)
+    await security_service.create_and_send_otp(user=user, email=user.email, purpose=payload.purpose)
+    return {"message": "OTP resent successfully.", "email": user.email, "purpose": payload.purpose}
 
 
 @router.post("/forgot-password")
@@ -349,26 +631,18 @@ async def forgot_password(
     payload: ForgotPasswordRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
+    rate_limiter: RateLimiter = Depends(get_rate_limiter),
 ):
-    ip_address = get_client_ip(request)
-    security_service = AuthSecurityService(db)
-
-    await security_service.check_ip_lock(ip_address)
+    if await rate_limiter.is_rate_limited("forgot_password", request):
+        raise AuthError.rate_limited()
 
     user_repo = UserRepository(db)
     user = await user_repo.get_by_email(str(payload.email))
-
     if user is not None and user.is_active:
-        await security_service.create_and_send_otp(
-            user=user,
-            email=user.email,
-            purpose="reset_password",
-        )
+        security_service = AuthSecurityService(db)
+        await security_service.create_and_send_otp(user=user, email=user.email, purpose="reset_password")
 
-    return {
-        "message": "If that email is registered, an OTP has been sent.",
-        "email": str(payload.email),
-    }
+    return {"message": "If that email is registered, an OTP has been sent.", "email": str(payload.email)}
 
 
 @router.post("/reset-password")
@@ -377,32 +651,24 @@ async def reset_password(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
+    pwd_check = validate_password_strength(payload.new_password)
+    if not pwd_check["valid"]:
+        raise AuthError.invalid_password(pwd_check["errors"])
+
     ip_address = get_client_ip(request)
     security_service = AuthSecurityService(db)
 
     otp = await security_service.verify_otp(
-        email=str(payload.email),
-        otp_code=payload.otp_code,
-        purpose="reset_password",
-        ip_address=ip_address,
+        email=str(payload.email), otp_code=payload.otp_code, purpose="reset_password", ip_address=ip_address
     )
 
     if otp.user_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid OTP.",
-        )
+        raise AuthError.invalid_otp()
 
     user = await db.get(User, otp.user_id)
-
     if user is None or not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found.",
-        )
+        raise AuthError.user_not_found()
 
     user.hashed_password = hash_password(payload.new_password)
-
     await db.commit()
-
     return {"message": "Password reset successful. You can now log in."}

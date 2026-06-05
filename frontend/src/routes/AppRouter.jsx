@@ -15,6 +15,7 @@ import TeamDetailPage from "../pages/TeamDetailPage";
 import AppLayout from "../components/layout/AppLayout";
 import IntegrationsPage from "../pages/IntegrationsPage";
 import ProfilePage from "../pages/ProfilePage";
+import OrganizationPage from "../pages/OrganizationPage";
 
 
 export default function AppRouter() {
@@ -37,7 +38,8 @@ export default function AppRouter() {
             <Route path="/projects" element={<ProjectsPage />} />
             <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
             <Route path="/tasks" element={<TasksPage />} />
-<Route path="/integrations" element={<IntegrationsPage />} />
+            <Route path="/integrations" element={<IntegrationsPage />} />
+            <Route path="/organization" element={<OrganizationPage />} />
           </Route>
         </Route>
       </Routes>

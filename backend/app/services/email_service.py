@@ -41,6 +41,58 @@ def _fmt_date(d) -> str:
 class EmailService:
 
     # ═══════════════════════════════════════════════════════════════════════════
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Organization invitation email
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def send_invitation_email(
+        self,
+        *,
+        to_email: str,
+        org_name: str,
+        inviter_name: str,
+        token: str,
+    ) -> None:
+        from app.core.config import get_settings
+        frontend_url = get_settings().FRONTEND_URL
+        accept_url = f"{frontend_url}/accept-invitation?token={token}"
+
+        if not settings.SMTP_HOST or not settings.SMTP_USERNAME or not settings.SMTP_PASSWORD:
+            logger.info(
+                "[DEV INVITE] To: %s | Org: %s | Inviter: %s | Accept URL: %s",
+                to_email, org_name, inviter_name, accept_url,
+            )
+            return
+
+        subject = f"You've been invited to join {org_name}"
+        html = f"""
+        <div style="font-family:sans-serif;max-width:480px;margin:0 auto;">
+          <h2>You're invited!</h2>
+          <p>{inviter_name} has invited you to join <strong>{org_name}</strong>.</p>
+          <p>
+            <a href="{accept_url}" style="background:#0f172a;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block;">
+              Accept Invitation
+            </a>
+          </p>
+          <p style="color:#64748b;font-size:12px;">This invitation expires in 72 hours.</p>
+        </div>
+        """
+
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = f"{settings.SMTP_FROM_NAME} <{settings.SMTP_FROM_EMAIL}>"
+        msg["To"] = to_email
+        msg.attach(MIMEText(html, "html"))
+
+        try:
+            with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=SMTP_TIMEOUT_SECONDS) as server:
+                server.starttls()
+                server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
+                server.sendmail(settings.SMTP_FROM_EMAIL, [to_email], msg.as_string())
+        except Exception as exc:
+            logger.warning("Invitation email failed: %s", exc)
+
+    # ═══════════════════════════════════════════════════════════════════════════
     # Existing OTP email (unchanged)
     # ═══════════════════════════════════════════════════════════════════════════
 

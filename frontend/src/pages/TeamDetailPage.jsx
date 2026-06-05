@@ -1,10 +1,496 @@
 import { useEffect, useMemo, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import toast from "react-hot-toast";
+import DOMPurify from "dompurify";
 
 import { teamApi } from "../api/teamApi";
 import { taskApi } from "../api/taskApi";
+import { teamNewsApi } from "../api/teamNewsApi";
+import { userApi } from "../api/userApi";
 import { useAuth } from "../context/AuthContext";
+import RocksTab from "./RocksTab";
+import KPIsTab from "./KPIsTab";
+import IssuesTab from "./IssuesTab";
+import RichEditor from "../components/RichEditor";
+
+function stripHtml(html) {
+  if (!html) return "";
+  const div = document.createElement("div");
+  div.innerHTML = DOMPurify.sanitize(html);
+  return div.textContent || "";
+}
+
+// ─── News helpers ─────────────────────────────────────────────────────────────
+
+const AVATAR_COLORS = [
+  "bg-indigo-500", "bg-violet-500", "bg-emerald-500", "bg-sky-500",
+  "bg-amber-500", "bg-rose-500", "bg-teal-500", "bg-fuchsia-500",
+];
+
+function getInitials(name) {
+  if (!name) return "?";
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 1) return parts[0][0].toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+function formatRelative(dateStr) {
+  if (!dateStr) return "";
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 30) return `${days}d ago`;
+  return new Date(dateStr).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+function NewsModal({ team, users, currentUser, editing, onClose, onSave, saving }) {
+  const [title, setTitle] = useState(editing?.title || "");
+  const [body, setBody] = useState(editing?.body || "");
+  const [status, setStatus] = useState(editing?.status || "active");
+  const [ownerId, setOwnerId] = useState(
+    editing ? String(editing.owner_id || "") : String(currentUser?.id || "")
+  );
+
+  function handleSubmit(e) {
+    e.preventDefault();
+    if (!title.trim()) return;
+    onSave({
+      title: title.trim(),
+      body: body || "",
+      status,
+      owner_id: ownerId ? Number(ownerId) : null,
+    });
+  }
+
+  const selectedOwner = users.find((u) => String(u.id) === String(ownerId));
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/40 p-8 backdrop-blur-sm">
+      <div className="w-full max-w-3xl rounded-2xl bg-white shadow-2xl">
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+          <h2 className="text-base font-bold text-slate-900">
+            {editing ? "Edit News" : "Create News"}
+          </h2>
+          <button type="button" onClick={onClose}
+            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
+            <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+              <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+            </svg>
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit}>
+          <div className="grid min-h-[300px] grid-cols-[1fr_260px] divide-x divide-slate-100">
+            {/* Left: title + rich text body */}
+            <div className="flex flex-col gap-4 p-5">
+              <div className="flex items-center gap-3 border-b border-slate-100 pb-4">
+                <svg className="h-6 w-6 shrink-0 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M2 5a2 2 0 012-2h8a2 2 0 012 2v10a2 2 0 002 2H4a2 2 0 01-2-2V5zm3 1h6v4H5V6zm6 6H5v2h6v-2z" clipRule="evenodd" />
+                  <path d="M15 7h1a2 2 0 012 2v5.5a1.5 1.5 0 01-3 0V7z" />
+                </svg>
+                <input
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder="What happened?"
+                  required
+                  autoFocus
+                  className="flex-1 border-none text-base font-medium text-slate-900 placeholder:text-slate-300 outline-none"
+                />
+              </div>
+              <RichEditor
+                content={body}
+                onChange={setBody}
+                placeholder="Share context, decisions, and next steps."
+                minHeight={200}
+              />
+            </div>
+
+            {/* Right: Settings */}
+            <div className="space-y-4 p-5">
+              <p className="text-sm font-semibold text-slate-800">Settings</p>
+
+              {/* Team (read-only display) */}
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold text-slate-500">Teams</label>
+                <div className="flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2.5">
+                  <svg className="h-4 w-4 shrink-0 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
+                    <path d="M7 8a3 3 0 100-6 3 3 0 000 6zM13.5 9a2.5 2.5 0 100-5 2.5 2.5 0 000 5z" />
+                    <path d="M2.5 15.5A4.5 4.5 0 017 11h.25a4.5 4.5 0 014.5 4.5.5.5 0 01-.5.5H3a.5.5 0 01-.5-.5z" />
+                  </svg>
+                  <span className="truncate text-sm text-slate-700">{team?.name || "—"}</span>
+                  <svg className="ml-auto h-4 w-4 shrink-0 text-slate-300" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 011.06 0L10 11.94l3.72-3.72a.75.75 0 111.06 1.06l-4.25 4.25a.75.75 0 01-1.06 0L5.22 9.28a.75.75 0 010-1.06z" clipRule="evenodd" />
+                  </svg>
+                </div>
+              </div>
+
+              {/* Owner */}
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold text-slate-500">Owner</label>
+                <div className="relative">
+                  <div className="flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2.5">
+                    {selectedOwner ? (
+                      <>
+                        <div className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[9px] font-bold text-white ${AVATAR_COLORS[selectedOwner.id % AVATAR_COLORS.length]}`}>
+                          {getInitials(selectedOwner.full_name || selectedOwner.email)}
+                        </div>
+                        <span className="truncate text-sm text-slate-700">{selectedOwner.full_name || selectedOwner.email}</span>
+                      </>
+                    ) : (
+                      <span className="text-sm text-slate-400">Unassigned</span>
+                    )}
+                    <svg className="ml-auto h-4 w-4 shrink-0 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 011.06 0L10 11.94l3.72-3.72a.75.75 0 111.06 1.06l-4.25 4.25a.75.75 0 01-1.06 0L5.22 9.28a.75.75 0 010-1.06z" clipRule="evenodd" />
+                    </svg>
+                  </div>
+                  <select value={ownerId} onChange={(e) => setOwnerId(e.target.value)}
+                    className="absolute inset-0 w-full cursor-pointer opacity-0">
+                    <option value="">Unassigned</option>
+                    {users.map((u) => <option key={u.id} value={u.id}>{u.full_name || u.email}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              {/* Status (only when editing) */}
+              {editing && (
+                <div>
+                  <label className="mb-1.5 block text-xs font-semibold text-slate-500">Status</label>
+                  <div className="relative">
+                    <select value={status} onChange={(e) => setStatus(e.target.value)}
+                      className="w-full appearance-none rounded-xl border border-slate-200 px-3 py-2.5 text-sm focus:outline-none">
+                      <option value="active">Active</option>
+                      <option value="archived">Archived</option>
+                    </select>
+                    <svg className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 011.06 0L10 11.94l3.72-3.72a.75.75 0 111.06 1.06l-4.25 4.25a.75.75 0 01-1.06 0L5.22 9.28a.75.75 0 010-1.06z" clipRule="evenodd" />
+                    </svg>
+                  </div>
+                </div>
+              )}
+
+              {/* Links placeholder */}
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold text-slate-500">Links</label>
+                <div className="flex items-center justify-between rounded-xl border border-slate-200 px-3 py-2.5">
+                  <span className="text-sm text-slate-400">Select linked items</span>
+                  <svg className="h-4 w-4 shrink-0 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 011.06 0L10 11.94l3.72-3.72a.75.75 0 111.06 1.06l-4.25 4.25a.75.75 0 01-1.06 0L5.22 9.28a.75.75 0 010-1.06z" clipRule="evenodd" />
+                  </svg>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Footer */}
+          <div className="flex items-center justify-end gap-2 border-t border-slate-100 px-6 py-4">
+            <button type="button" onClick={onClose}
+              className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+              Cancel
+            </button>
+            <button type="submit" disabled={saving}
+              className="rounded-xl bg-slate-900 px-5 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-60">
+              {saving ? "Saving…" : editing ? "Save Changes" : "Create News"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function NewsViewModal({ item, canManage, onClose, onEdit }) {
+  const owner = item.owner;
+  const cleanHtml = DOMPurify.sanitize(item.body || "");
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/40 p-8 backdrop-blur-sm">
+      <div className="w-full max-w-2xl rounded-2xl bg-white shadow-2xl">
+        {/* Header */}
+        <div className="flex items-start justify-between border-b border-slate-100 px-6 py-5">
+          <div className="min-w-0 pr-4">
+            <h2 className="text-lg font-bold text-slate-900">{item.title}</h2>
+            <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-slate-400">
+              {owner && (
+                <span>{owner.full_name || owner.email}</span>
+              )}
+              <span>{formatRelative(item.created_at)}</span>
+              {item.status === "archived" && (
+                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                  Archived
+                </span>
+              )}
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {canManage && (
+              <button type="button" onClick={onEdit}
+                className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
+                Edit
+              </button>
+            )}
+            <button type="button" onClick={onClose}
+              className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
+              <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        {/* Rendered body */}
+        <div className="px-6 py-6">
+          {cleanHtml ? (
+            <div
+              className="rich-text text-sm text-slate-700"
+              dangerouslySetInnerHTML={{ __html: cleanHtml }}
+            />
+          ) : (
+            <p className="text-sm italic text-slate-400">No content added yet.</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function NewsTab({ team, canManage }) {
+  const { user } = useAuth();
+  const [news, setNews] = useState([]);
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState("active");
+  const [showModal, setShowModal] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [openMenuId, setOpenMenuId] = useState(null);
+  const [viewItem, setViewItem] = useState(null);
+
+  useEffect(() => {
+    if (!team?.id) return;
+    load();
+  }, [team?.id]);
+
+  useEffect(() => {
+    if (!openMenuId) return;
+    function handle() { setOpenMenuId(null); }
+    document.addEventListener("click", handle);
+    return () => document.removeEventListener("click", handle);
+  }, [openMenuId]);
+
+  async function load() {
+    try {
+      setLoading(true);
+      const [n, u] = await Promise.all([
+        teamNewsApi.list(team.id),
+        userApi.list().catch(() => []),
+      ]);
+      setNews(Array.isArray(n) ? n : []);
+      setUsers(Array.isArray(u) ? u : []);
+    } catch {
+      toast.error("Failed to load news.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleSave(payload) {
+    setSaving(true);
+    try {
+      if (editing) {
+        const updated = await teamNewsApi.update(team.id, editing.id, payload);
+        setNews((prev) => prev.map((n) => (n.id === editing.id ? updated : n)));
+        toast.success("News updated.");
+      } else {
+        const created = await teamNewsApi.create(team.id, payload);
+        setNews((prev) => [created, ...prev]);
+        toast.success("News created.");
+      }
+      setShowModal(false);
+      setEditing(null);
+    } catch {
+      toast.error("Failed to save news.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDelete(item) {
+    if (!confirm(`Delete "${item.title}"?`)) return;
+    try {
+      await teamNewsApi.delete(team.id, item.id);
+      setNews((prev) => prev.filter((n) => n.id !== item.id));
+      toast.success("News deleted.");
+    } catch {
+      toast.error("Failed to delete news.");
+    }
+  }
+
+  const filtered = news.filter((n) =>
+    filter === "archived" ? n.status === "archived" : n.status !== "archived"
+  );
+
+  return (
+    <div>
+      {/* Header */}
+      <div className="mb-4 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <h2 className="text-xl font-bold text-slate-900">News</h2>
+          <button type="button" className="rounded-full p-1 text-slate-400 hover:bg-slate-100">
+            <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a.75.75 0 000 1.5h.253a.25.25 0 01.244.304l-.459 2.066A1.75 1.75 0 0010.747 15H11a.75.75 0 000-1.5h-.253a.25.25 0 01-.244-.304l.459-2.066A1.75 1.75 0 009.253 9H9z" clipRule="evenodd" />
+            </svg>
+          </button>
+        </div>
+        {canManage && (
+          <button type="button" onClick={() => { setEditing(null); setShowModal(true); }}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50">
+            <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+              <path d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z" />
+            </svg>
+            New News
+          </button>
+        )}
+      </div>
+
+      {/* Active / Archived filter */}
+      <div className="mb-4 flex items-center gap-1">
+        {[{ id: "active", label: "Active" }, { id: "archived", label: "Archived" }].map((f) => (
+          <button key={f.id} type="button" onClick={() => setFilter(f.id)}
+            className={`rounded-full px-3.5 py-1.5 text-sm font-semibold transition ${
+              filter === f.id ? "bg-orange-500 text-white" : "text-slate-600 hover:bg-slate-100"
+            }`}>
+            {f.label}
+          </button>
+        ))}
+      </div>
+
+      {/* List */}
+      {loading ? (
+        <div className="space-y-2">
+          {[1, 2, 3].map((i) => <div key={i} className="h-14 animate-pulse rounded-xl bg-slate-100" />)}
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-200 py-20 text-center">
+          <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100 text-slate-400">
+            <svg className="h-7 w-7" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M2 5a2 2 0 012-2h8a2 2 0 012 2v10a2 2 0 002 2H4a2 2 0 01-2-2V5zm3 1h6v4H5V6zm6 6H5v2h6v-2z" clipRule="evenodd" />
+              <path d="M15 7h1a2 2 0 012 2v5.5a1.5 1.5 0 01-3 0V7z" />
+            </svg>
+          </div>
+          <p className="text-sm font-semibold text-slate-700">
+            {filter === "archived" ? "No archived news" : "No News Yet"}
+          </p>
+          <p className="mt-1 text-sm text-slate-400">
+            Nothing to see here yet.{canManage && filter === "active" ? " Click the button below to create your first News." : ""}
+          </p>
+          {canManage && filter === "active" && (
+            <button type="button" onClick={() => { setEditing(null); setShowModal(true); }}
+              className="mt-5 rounded-xl border border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50">
+              Create
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="divide-y divide-slate-100 rounded-2xl border border-slate-200 bg-white">
+          {filtered.map((item) => {
+            const owner = item.owner;
+            return (
+              <div key={item.id}
+                className="group flex cursor-pointer items-center gap-3 px-4 py-3.5 hover:bg-slate-50 first:rounded-t-2xl last:rounded-b-2xl"
+                onClick={() => setViewItem(item)}>
+                {/* Icon */}
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-400">
+                  <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M2 5a2 2 0 012-2h8a2 2 0 012 2v10a2 2 0 002 2H4a2 2 0 01-2-2V5zm3 1h6v4H5V6zm6 6H5v2h6v-2z" clipRule="evenodd" />
+                    <path d="M15 7h1a2 2 0 012 2v5.5a1.5 1.5 0 01-3 0V7z" />
+                  </svg>
+                </div>
+                {/* Title + plain-text preview */}
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-slate-900">{item.title}</p>
+                  {item.body && (
+                    <p className="truncate text-xs text-slate-400">{stripHtml(item.body)}</p>
+                  )}
+                </div>
+                {/* Owner avatar */}
+                {owner && (
+                  <div className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[9px] font-bold text-white ${AVATAR_COLORS[owner.id % AVATAR_COLORS.length]}`}
+                    title={owner.full_name || owner.email}>
+                    {getInitials(owner.full_name || owner.email)}
+                  </div>
+                )}
+                {/* Relative time */}
+                <span className="shrink-0 text-xs text-slate-400">{formatRelative(item.created_at)}</span>
+                {/* Three-dots */}
+                {canManage && (
+                  <div className="relative opacity-0 transition-opacity group-hover:opacity-100"
+                    onClick={(e) => e.stopPropagation()}>
+                    <button type="button"
+                      onClick={(e) => { e.stopPropagation(); setOpenMenuId(openMenuId === item.id ? null : item.id); }}
+                      className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
+                      <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                        <path d="M10 3a1.5 1.5 0 110 3 1.5 1.5 0 010-3zM10 8.5a1.5 1.5 0 110 3 1.5 1.5 0 010-3zM11.5 15.5a1.5 1.5 0 10-3 0 1.5 1.5 0 003 0z" />
+                      </svg>
+                    </button>
+                    {openMenuId === item.id && (
+                      <>
+                        <div className="fixed inset-0 z-10" onClick={() => setOpenMenuId(null)} />
+                        <div className="absolute right-0 top-8 z-20 w-36 rounded-xl border border-slate-200 bg-white py-1 shadow-xl">
+                          <button type="button"
+                            onClick={() => { setOpenMenuId(null); setEditing(item); setShowModal(true); }}
+                            className="flex w-full items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">
+                            <svg className="h-4 w-4 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
+                              <path d="M5.433 13.917l1.262-3.155A4 4 0 017.58 9.42l6.92-6.918a2.121 2.121 0 013 3l-6.92 6.918c-.383.383-.84.685-1.343.886l-3.154 1.262a.5.5 0 01-.65-.65z" />
+                            </svg>
+                            Edit
+                          </button>
+                          <button type="button"
+                            onClick={() => { setOpenMenuId(null); handleDelete(item); }}
+                            className="flex w-full items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50">
+                            <svg className="h-4 w-4 text-red-400" viewBox="0 0 20 20" fill="currentColor">
+                              <path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.52.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4z" clipRule="evenodd" />
+                            </svg>
+                            Delete
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {viewItem && (
+        <NewsViewModal
+          item={viewItem}
+          canManage={canManage}
+          onClose={() => setViewItem(null)}
+          onEdit={() => { setEditing(viewItem); setViewItem(null); setShowModal(true); }}
+        />
+      )}
+
+      {showModal && (
+        <NewsModal
+          team={team}
+          users={users}
+          currentUser={user}
+          editing={editing}
+          onClose={() => { setShowModal(false); setEditing(null); }}
+          onSave={handleSave}
+          saving={saving}
+        />
+      )}
+    </div>
+  );
+}
 
 const STATUS_OPTIONS = [
   { value: "todo", label: "Todo" },
@@ -57,17 +543,182 @@ function getStatusBadgeClass(status) {
   return "inline-flex rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700";
 }
 
+const TEAM_PAGE_TABS = [
+  { id: "news",     label: "News"     },
+  { id: "rocks",    label: "Rocks"    },
+  { id: "kpis",     label: "KPIs"     },
+  { id: "todos",    label: "To-Dos"   },
+  { id: "issues",   label: "Issues"   },
+  { id: "meetings", label: "Meetings" },
+];
+
+function CreateTodoModal({ team, users, onClose, onSave, saving }) {
+  const [name, setName] = useState("");
+  const [assigneeId, setAssigneeId] = useState("");
+  const [startDate, setStartDate] = useState("");
+  const [dueDate, setDueDate] = useState("");
+  const [taskStatus, setTaskStatus] = useState("todo");
+  const [priority, setPriority] = useState("medium");
+
+  function handleSubmit(e) {
+    e.preventDefault();
+    if (!name.trim()) return;
+    onSave({
+      name: name.trim(),
+      assignee_id: assigneeId ? Number(assigneeId) : null,
+      start_date: startDate || null,
+      due_date: dueDate || null,
+      status: taskStatus,
+      priority,
+      team_id: team.id,
+    });
+  }
+
+  const selectedAssignee = users.find((u) => String(u.id) === String(assigneeId));
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/40 p-8 backdrop-blur-sm">
+      <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl">
+        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+          <h2 className="text-base font-bold text-slate-900">Create To-Do</h2>
+          <button type="button" onClick={onClose}
+            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
+            <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+              <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+            </svg>
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit}>
+          <div className="space-y-4 p-6">
+            {/* Task Name */}
+            <div>
+              <label className="mb-1.5 block text-xs font-semibold text-slate-500">Task Name *</label>
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Enter task name"
+                required
+                autoFocus
+                className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-slate-400 focus:outline-none"
+              />
+            </div>
+
+            {/* Assignee */}
+            <div>
+              <label className="mb-1.5 block text-xs font-semibold text-slate-500">Assignee</label>
+              <div className="relative">
+                <div className="flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2.5">
+                  {selectedAssignee ? (
+                    <>
+                      <div className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[9px] font-bold text-white ${AVATAR_COLORS[selectedAssignee.id % AVATAR_COLORS.length]}`}>
+                        {getInitials(selectedAssignee.full_name || selectedAssignee.email)}
+                      </div>
+                      <span className="truncate text-sm text-slate-700">{selectedAssignee.full_name || selectedAssignee.email}</span>
+                    </>
+                  ) : (
+                    <span className="text-sm text-slate-400">Unassigned</span>
+                  )}
+                  <svg className="ml-auto h-4 w-4 shrink-0 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 011.06 0L10 11.94l3.72-3.72a.75.75 0 111.06 1.06l-4.25 4.25a.75.75 0 01-1.06 0L5.22 9.28a.75.75 0 010-1.06z" clipRule="evenodd" />
+                  </svg>
+                </div>
+                <select value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)}
+                  className="absolute inset-0 w-full cursor-pointer opacity-0">
+                  <option value="">Unassigned</option>
+                  {users.map((u) => <option key={u.id} value={u.id}>{u.full_name || u.email}</option>)}
+                </select>
+              </div>
+            </div>
+
+            {/* Dates */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold text-slate-500">Start Date</label>
+                <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-700 focus:border-slate-400 focus:outline-none" />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold text-slate-500">Due Date</label>
+                <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-700 focus:border-slate-400 focus:outline-none" />
+              </div>
+            </div>
+
+            {/* Status + Priority */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold text-slate-500">Status</label>
+                <div className="relative">
+                  <select value={taskStatus} onChange={(e) => setTaskStatus(e.target.value)}
+                    className="w-full appearance-none rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-700 focus:border-slate-400 focus:outline-none">
+                    <option value="todo">Todo</option>
+                    <option value="in_progress">In Progress</option>
+                    <option value="done">Done</option>
+                  </select>
+                  <svg className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 011.06 0L10 11.94l3.72-3.72a.75.75 0 111.06 1.06l-4.25 4.25a.75.75 0 01-1.06 0L5.22 9.28a.75.75 0 010-1.06z" clipRule="evenodd" />
+                  </svg>
+                </div>
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold text-slate-500">Priority</label>
+                <div className="relative">
+                  <select value={priority} onChange={(e) => setPriority(e.target.value)}
+                    className="w-full appearance-none rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-700 focus:border-slate-400 focus:outline-none">
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                  </select>
+                  <svg className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 011.06 0L10 11.94l3.72-3.72a.75.75 0 111.06 1.06l-4.25 4.25a.75.75 0 01-1.06 0L5.22 9.28a.75.75 0 010-1.06z" clipRule="evenodd" />
+                  </svg>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-end gap-2 border-t border-slate-100 px-6 py-4">
+            <button type="button" onClick={onClose}
+              className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+              Cancel
+            </button>
+            <button type="submit" disabled={saving || !name.trim()}
+              className="rounded-xl bg-slate-900 px-5 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-60">
+              {saving ? "Creating…" : "Create To-Do"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function PlaceholderTab({ title, description, emoji }) {
+  return (
+    <div className="flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-200 py-20 text-center">
+      <span className="mb-3 text-4xl">{emoji}</span>
+      <p className="text-sm font-semibold text-slate-700">{title}</p>
+      <p className="mt-1 text-sm text-slate-400">{description}</p>
+    </div>
+  );
+}
+
 export default function TeamDetailPage() {
   const { teamId } = useParams();
   const { user } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
 
-  const [activeTab, setActiveTab] = useState("overview");
+  const activeTab = searchParams.get("tab") || "news";
   const [team, setTeam] = useState(null);
   const [tasks, setTasks] = useState([]);
   const [calendarDate, setCalendarDate] = useState(new Date());
 
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
+  const [showTodoModal, setShowTodoModal] = useState(false);
+  const [todoSaving, setTodoSaving] = useState(false);
+  const [todoUsers, setTodoUsers] = useState([]);
 
   const canManageTasks = user?.role === "admin" || user?.role === "team_manager";
 
@@ -133,8 +784,33 @@ export default function TeamDetailPage() {
 
   useEffect(() => {
     loadData();
-    setActiveTab("overview");
   }, [teamId]);
+
+  async function openTodoModal() {
+    if (todoUsers.length === 0) {
+      try {
+        const u = await userApi.list();
+        setTodoUsers(Array.isArray(u) ? u : []);
+      } catch {
+        setTodoUsers([]);
+      }
+    }
+    setShowTodoModal(true);
+  }
+
+  async function handleCreateTodo(payload) {
+    setTodoSaving(true);
+    try {
+      const created = await taskApi.create(payload);
+      setTasks((prev) => [created, ...prev]);
+      setShowTodoModal(false);
+      toast.success("To-Do created.");
+    } catch {
+      toast.error("Failed to create to-do.");
+    } finally {
+      setTodoSaving(false);
+    }
+  }
 
   async function quickStatusUpdate(task, status) {
     try {
@@ -209,20 +885,20 @@ export default function TeamDetailPage() {
         </p>
       </div>
 
-      <div className="mb-6 border-b border-slate-200">
-        <nav className="flex gap-6 overflow-x-auto">
-          {["overview", "members", "all works", "calendar"].map((tab) => (
+      <div className="mb-8 border-b border-slate-200">
+        <nav className="flex gap-1">
+          {TEAM_PAGE_TABS.map((tab) => (
             <button
-              key={tab}
+              key={tab.id}
               type="button"
-              onClick={() => setActiveTab(tab)}
+              onClick={() => setSearchParams({ tab: tab.id })}
               className={
-                activeTab === tab
-                  ? "whitespace-nowrap border-b-2 border-slate-900 pb-3 text-sm font-semibold capitalize text-slate-900"
-                  : "whitespace-nowrap pb-3 text-sm font-semibold capitalize text-slate-500 hover:text-slate-900"
+                activeTab === tab.id
+                  ? "whitespace-nowrap border-b-2 border-slate-900 px-4 py-3 text-sm font-semibold text-slate-900"
+                  : "whitespace-nowrap px-4 py-3 text-sm font-semibold text-slate-500 hover:text-slate-900"
               }
             >
-              {tab}
+              {tab.label}
             </button>
           ))}
         </nav>
@@ -234,107 +910,32 @@ export default function TeamDetailPage() {
         </div>
       ) : null}
 
-      {activeTab === "overview" ? (
-        <section className="space-y-6">
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-              <p className="text-sm font-medium text-slate-500">Members</p>
-              <p className="mt-3 text-3xl font-bold text-slate-900">
-                {members.length}
-              </p>
-            </div>
+      {activeTab === "news" && (
+        <NewsTab team={team} canManage={canManageTasks} />
+      )}
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-              <p className="text-sm font-medium text-slate-500">All Works</p>
-              <p className="mt-3 text-3xl font-bold text-slate-900">
-                {tasks.length}
-              </p>
-            </div>
+      {activeTab === "rocks" && (
+        <RocksTab team={team} canManage={canManageTasks} />
+      )}
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-              <p className="text-sm font-medium text-slate-500">In Progress</p>
-              <p className="mt-3 text-3xl font-bold text-slate-900">
-                {inProgressTasks.length}
-              </p>
-            </div>
+      {activeTab === "kpis" && (
+        <KPIsTab team={team} canManage={canManageTasks} />
+      )}
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-              <p className="text-sm font-medium text-slate-500">Done</p>
-              <p className="mt-3 text-3xl font-bold text-slate-900">
-                {doneTasks.length}
-              </p>
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-            <h2 className="text-lg font-semibold text-slate-900">
-              Work Summary
-            </h2>
-
-            <div className="mt-4 grid gap-3 sm:grid-cols-3">
-              <div className="rounded-xl bg-slate-50 p-4">
-                <p className="text-sm text-slate-500">Todo</p>
-                <p className="mt-2 text-2xl font-bold text-slate-900">
-                  {todoTasks.length}
-                </p>
-              </div>
-
-              <div className="rounded-xl bg-slate-50 p-4">
-                <p className="text-sm text-slate-500">In Progress</p>
-                <p className="mt-2 text-2xl font-bold text-slate-900">
-                  {inProgressTasks.length}
-                </p>
-              </div>
-
-              <div className="rounded-xl bg-slate-50 p-4">
-                <p className="text-sm text-slate-500">Done</p>
-                <p className="mt-2 text-2xl font-bold text-slate-900">
-                  {doneTasks.length}
-                </p>
-              </div>
-            </div>
-          </div>
-        </section>
-      ) : null}
-
-      {activeTab === "members" ? (
-        <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="border-b border-slate-200 px-6 py-4">
-            <h2 className="text-lg font-semibold text-slate-900">
-              Team Members
-            </h2>
-          </div>
-
-          <div className="divide-y divide-slate-200">
-            {members.map((member) => (
-              <div
-                key={member.id}
-                className="flex flex-col gap-2 px-6 py-4 sm:flex-row sm:items-center sm:justify-between"
-              >
-                <div>
-                  <h3 className="font-medium text-slate-900">
-                    {member.full_name}
-                  </h3>
-                  <p className="text-sm text-slate-500">{member.email}</p>
-                </div>
-
-                <span className="w-fit rounded-full bg-slate-100 px-3 py-1 text-xs font-medium capitalize text-slate-700">
-                  {member.role?.replace("_", " ")}
-                </span>
-              </div>
-            ))}
-
-            {!members.length ? (
-              <div className="p-6 text-sm text-slate-500">
-                No members found in this team.
-              </div>
-            ) : null}
-          </div>
-        </section>
-      ) : null}
-
-      {activeTab === "all works" ? (
+      {activeTab === "todos" ? (
         <section className="overflow-visible rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+            <h2 className="text-base font-bold text-slate-900">To-Dos</h2>
+            {canManageTasks && (
+              <button type="button" onClick={openTodoModal}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50">
+                <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                  <path d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z" />
+                </svg>
+                New To-Do
+              </button>
+            )}
+          </div>
           <div className="overflow-x-auto xl:overflow-visible">
             <table className="w-full min-w-[1000px] text-sm xl:min-w-0">
               <thead className="bg-slate-50">
@@ -448,11 +1049,22 @@ export default function TeamDetailPage() {
                   ))
                 ) : (
                   <tr>
-                    <td
-                      colSpan={7}
-                      className="px-4 py-8 text-center text-sm text-slate-500"
-                    >
-                      No works found in this team.
+                    <td colSpan={7} className="px-4 py-16 text-center">
+                      <div className="flex flex-col items-center">
+                        <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-400">
+                          <svg className="h-6 w-6" viewBox="0 0 20 20" fill="currentColor">
+                            <path d="M7 3a1 1 0 000 2h6a1 1 0 100-2H7zM4 7a1 1 0 011-1h10a1 1 0 110 2H5a1 1 0 01-1-1zM2 11a2 2 0 012-2h12a2 2 0 012 2v4a2 2 0 01-2 2H4a2 2 0 01-2-2v-4z" />
+                          </svg>
+                        </div>
+                        <p className="text-sm font-semibold text-slate-700">No To-Dos Yet</p>
+                        <p className="mt-1 text-sm text-slate-400">Nothing to see here yet.{canManageTasks ? " Click the button above to create your first to-do." : ""}</p>
+                        {canManageTasks && (
+                          <button type="button" onClick={openTodoModal}
+                            className="mt-4 rounded-xl border border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50">
+                            Create
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 )}
@@ -462,7 +1074,21 @@ export default function TeamDetailPage() {
         </section>
       ) : null}
 
-      {activeTab === "calendar" ? (
+      {showTodoModal && (
+        <CreateTodoModal
+          team={team}
+          users={todoUsers}
+          onClose={() => setShowTodoModal(false)}
+          onSave={handleCreateTodo}
+          saving={todoSaving}
+        />
+      )}
+
+      {activeTab === "issues" && (
+        <IssuesTab team={team} canManage={canManageTasks} />
+      )}
+
+      {activeTab === "meetings" ? (
         <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="flex flex-col gap-4 border-b border-slate-200 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-2">

@@ -1,5 +1,6 @@
 import json
 import logging
+from datetime import date
 
 from pydantic import ValidationError
 
@@ -134,7 +135,12 @@ class AITaskExtractor:
     ) -> tuple[list[ExtractedTask], dict]:
         provider = get_llm_provider()
 
-        system_prompt = _SYSTEM_PROMPT_BASE
+        today_str = date.today().isoformat()
+        system_prompt = (
+            _SYSTEM_PROMPT_BASE
+            + f"\n\nToday's date is {today_str}. "
+            "All suggested start and due dates must be on or after today unless the source text explicitly states a past date."
+        )
         if known_users:
             users_lines = "\n".join(
                 f"- {u['name']} <{u['email']}>" for u in known_users

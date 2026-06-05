@@ -1,23 +1,28 @@
-from sqlalchemy import select, func
+import uuid
+
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.task_suggestion import TaskSuggestion
+from app.repositories.base_tenant_repository import TenantRepository
 from app.schemas.task_suggestion import ExtractedTask
 
 
-
-class TaskSuggestionRepository:
-    def __init__(self, db: AsyncSession):
-        self.db = db
+class TaskSuggestionRepository(TenantRepository):
+    def __init__(self, db: AsyncSession, org_id: uuid.UUID) -> None:
+        super().__init__(db, org_id)
 
     async def list_pending(self, user_id: int) -> list[TaskSuggestion]:
-        statement = (
+        stmt = (
             select(TaskSuggestion)
-            .where(TaskSuggestion.created_by_id == user_id)
-            .where(TaskSuggestion.status == "pending")
+            .where(
+                TaskSuggestion.organization_id == self.org_id,
+                TaskSuggestion.created_by_id == user_id,
+                TaskSuggestion.status == "pending",
+            )
             .order_by(TaskSuggestion.created_at.desc())
         )
-        result = await self.db.execute(statement)
+        result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
     async def source_already_analyzed(
@@ -27,21 +32,24 @@ class TaskSuggestionRepository:
         source_id: int,
         created_by_id: int,
     ) -> bool:
-        statement = (
+        stmt = (
             select(func.count(TaskSuggestion.id))
-            .where(TaskSuggestion.source_type == source_type)
-            .where(TaskSuggestion.source_id == source_id)
-            .where(TaskSuggestion.created_by_id == created_by_id)
+            .where(
+                TaskSuggestion.organization_id == self.org_id,
+                TaskSuggestion.source_type == source_type,
+                TaskSuggestion.source_id == source_id,
+                TaskSuggestion.created_by_id == created_by_id,
+            )
         )
-
-        result = await self.db.execute(statement)
-        count = result.scalar_one()
-
-        return count > 0
+        result = await self.db.execute(stmt)
+        return (result.scalar_one() or 0) > 0
 
     async def get_by_id(self, suggestion_id: int) -> TaskSuggestion | None:
-        statement = select(TaskSuggestion).where(TaskSuggestion.id == suggestion_id)
-        result = await self.db.execute(statement)
+        stmt = select(TaskSuggestion).where(
+            TaskSuggestion.id == suggestion_id,
+            TaskSuggestion.organization_id == self.org_id,
+        )
+        result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
     async def create_many(
@@ -54,7 +62,6 @@ class TaskSuggestionRepository:
         created_by_id: int,
     ) -> list[TaskSuggestion]:
         suggestions = []
-
         for task in tasks:
             suggestion = TaskSuggestion(
                 source_type=source_type,
@@ -70,14 +77,12 @@ class TaskSuggestionRepository:
                 confidence=task.confidence,
                 raw_ai_payload=raw_ai_payload,
                 created_by_id=created_by_id,
+                organization_id=self.org_id,
             )
-
             self.db.add(suggestion)
             suggestions.append(suggestion)
 
         await self.db.commit()
-
-        for suggestion in suggestions:
-            await self.db.refresh(suggestion)
-
+        for s in suggestions:
+            await self.db.refresh(s)
         return suggestions

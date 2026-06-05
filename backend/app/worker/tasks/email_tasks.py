@@ -1,10 +1,14 @@
 """
-Celery tasks for all email notifications.
+ARCHIVED — NOT USED IN THE ACTIVE CODE PATH
+============================================
+Email sending has been migrated to FastAPI BackgroundTasks via
+app.services.background_email.  These Celery task wrappers are kept for
+reference in case Celery is re-enabled.  Nothing in the active application
+imports from this module.
 
-Each task accepts plain IDs (int / str), re-fetches ORM objects inside a fresh
-worker DB session, and delegates to the existing EmailService methods.  The
-EmailService already handles deduplication via EmailNotificationLog, so tasks
-are safe to retry without sending duplicate messages.
+Original purpose: Celery tasks for all email notifications.
+Each task accepted plain IDs, re-fetched ORM objects in a WorkerSession,
+and delegated to EmailService (which handles deduplication).
 """
 import asyncio
 import logging

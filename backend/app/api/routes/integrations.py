@@ -2,10 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
-from app.core.dependencies import require_admin_or_team_manager
 from app.core.config import settings
-from app.models.user import User
+from app.core.database import get_db
+from app.core.tenant import TenantContext, enforce_feature, get_tenant_context, require_org_admin
 from app.repositories.integration_repository import IntegrationRepository
 from app.schemas.integration import IntegrationAccountRead
 from datetime import datetime, timedelta, timezone
@@ -103,27 +102,24 @@ def get_yesterday_range_utc():
 
 @router.get("/accounts", response_model=list[IntegrationAccountRead])
 async def list_connected_accounts(
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin_or_team_manager),
+    tenant: TenantContext = Depends(get_tenant_context),
 ):
-    repository = IntegrationRepository(db)
-    accounts = await repository.list_accounts(current_user.id)
-
+    enforce_feature(tenant, "has_integrations")
+    repository = IntegrationRepository(tenant.db, tenant.organization_id)
+    accounts = await repository.list_accounts(tenant.user.id)
     return [IntegrationAccountRead.model_validate(account) for account in accounts]
 
 
 @router.get("/google/connect")
-async def connect_google(
-    current_user: User = Depends(require_admin_or_team_manager),
-):
-    return {"url": google_auth_url(current_user.id)}
+async def connect_google(tenant: TenantContext = Depends(get_tenant_context)):
+    enforce_feature(tenant, "has_integrations")
+    return {"url": google_auth_url(tenant.user.id, org_id=str(tenant.organization_id))}
 
 
 @router.get("/microsoft/connect")
-async def connect_microsoft(
-    current_user: User = Depends(require_admin_or_team_manager),
-):
-    return {"url": microsoft_auth_url(current_user.id)}
+async def connect_microsoft(tenant: TenantContext = Depends(get_tenant_context)):
+    enforce_feature(tenant, "has_integrations")
+    return {"url": microsoft_auth_url(tenant.user.id, org_id=str(tenant.organization_id))}
 
 
 @router.get("/google/callback")
@@ -132,6 +128,7 @@ async def google_callback(
     state: str = Query(...),
     db: AsyncSession = Depends(get_db),
 ):
+    # OAuth callbacks cannot carry JWT auth — they use the user_id + org_id baked into state.
     state_data = read_state(state)
 
     if state_data.get("provider") != "google":
@@ -145,7 +142,17 @@ async def google_callback(
     if not email:
         raise HTTPException(status_code=400, detail="Google account email not found.")
 
-    repository = IntegrationRepository(db)
+    import uuid as _uuid
+    org_id_raw = state_data.get("org_id")
+    org_id = _uuid.UUID(str(org_id_raw)) if org_id_raw else None
+
+    from sqlalchemy import select as _select
+    from app.models.organization import Organization
+    org = (await db.execute(_select(Organization).where(Organization.id == org_id))).scalar_one_or_none() if org_id else None
+    if org is None:
+        raise HTTPException(status_code=400, detail="Invalid organization context in OAuth state.")
+
+    repository = IntegrationRepository(db, org.id)
 
     await repository.upsert_account(
         user_id=state_data["user_id"],
@@ -164,13 +171,15 @@ async def google_callback(
 @router.delete("/accounts/{account_id}")
 async def disconnect_integration_account(
     account_id: int,
+    tenant: TenantContext = Depends(get_tenant_context),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin_or_team_manager),
 ):
+    enforce_feature(tenant, "has_integrations")
     result = await db.execute(
         select(IntegrationAccount).where(
             IntegrationAccount.id == account_id,
-            IntegrationAccount.user_id == current_user.id,
+            IntegrationAccount.user_id == tenant.user.id,
+            IntegrationAccount.organization_id == tenant.organization_id,
         )
     )
 
@@ -238,7 +247,15 @@ async def microsoft_callback(
     if not email:
         raise HTTPException(status_code=400, detail="Microsoft account email not found.")
 
-    repository = IntegrationRepository(db)
+    import uuid as _uuid2
+    org_id_raw2 = state_data.get("org_id")
+    org_id2 = _uuid2.UUID(str(org_id_raw2)) if org_id_raw2 else None
+    from sqlalchemy import select as _select2
+    from app.models.organization import Organization as _Org2
+    org2 = (await db.execute(_select2(_Org2).where(_Org2.id == org_id2))).scalar_one_or_none() if org_id2 else None
+    if org2 is None:
+        raise HTTPException(status_code=400, detail="Invalid organization context in OAuth state.")
+    repository = IntegrationRepository(db, org2.id)
 
     await repository.upsert_account(
         user_id=state_data["user_id"],
@@ -255,13 +272,14 @@ async def microsoft_callback(
 
 @router.post("/microsoft/sync-recent")
 async def sync_recent_microsoft_data(
+    tenant: TenantContext = Depends(get_tenant_context),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin_or_team_manager),
 ):
-    repository = IntegrationRepository(db)
+    enforce_feature(tenant, "has_integrations")
+    repository = IntegrationRepository(db, tenant.organization_id)
 
     accounts = await repository.list_accounts_by_provider(
-        current_user.id,
+        tenant.user.id,
         "microsoft",
     )
 

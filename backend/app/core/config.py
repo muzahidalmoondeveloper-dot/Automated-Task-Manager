@@ -18,10 +18,11 @@ class Settings(BaseSettings):
     JWT_SECRET_KEY: str
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 30
 
-    BACKEND_BASE_URL: str = "https://automated-task-manager.onrender.com"
-    FRONTEND_BASE_URL: str = "https://automated-task-manager.onrender.com"
-    CORS_ORIGINS: str = "https://automated-task-manager.onrender.com"
+    BACKEND_BASE_URL: str
+    FRONTEND_BASE_URL: str
+    CORS_ORIGINS: str
 
 
     GOOGLE_CLIENT_ID: str | None = None
@@ -86,9 +87,7 @@ class Settings(BaseSettings):
     SMTP_FROM_EMAIL: str = "no-reply@example.com"
     SMTP_FROM_NAME: str = "Automated Task Manager"
 
-    # ── Redis / Celery ───────────────────────────────────────────────────────
-    # Set REDIS_URL for a single-URL setup (Render Key Value).
-    # Override CELERY_BROKER_URL / CELERY_RESULT_BACKEND for split configs.
+    # ── Redis ────────────────────────────────────────────────────────────────
     REDIS_URL: str = "redis://localhost:6379/0"
     CELERY_BROKER_URL: str | None = None
     CELERY_RESULT_BACKEND: str | None = None
@@ -105,11 +104,11 @@ class Settings(BaseSettings):
 
     @property
     def celery_broker(self) -> str:
-        return self.CELERY_BROKER_URL or self.REDIS_URL
+        return self.CELERY_BROKER_URL or self.REDIS_URL or "redis://localhost:6379/0"
 
     @property
     def celery_backend(self) -> str:
-        return self.CELERY_RESULT_BACKEND or self.REDIS_URL
+        return self.CELERY_RESULT_BACKEND or self.REDIS_URL or "redis://localhost:6379/0"
 
 
 @lru_cache
