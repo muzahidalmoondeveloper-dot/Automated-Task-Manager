@@ -16,7 +16,7 @@ import AppLayout from "../components/layout/AppLayout";
 import IntegrationsPage from "../pages/IntegrationsPage";
 import ProfilePage from "../pages/ProfilePage";
 import OrganizationPage from "../pages/OrganizationPage";
-
+import OrganizationSetupPage from "../pages/OrganizationSetupPage";
 
 export default function AppRouter() {
   return (
@@ -24,10 +24,15 @@ export default function AppRouter() {
       <Routes>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
 
+        {/* Public */}
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
 
+        {/* Auth required, org NOT required — first-time org setup */}
+        <Route path="/setup/organization" element={<OrganizationSetupPage />} />
+
+        {/* Auth + org context required */}
         <Route element={<ProtectedRoute />}>
           <Route element={<AppLayout />}>
             <Route path="/dashboard" element={<DashboardPage />} />
