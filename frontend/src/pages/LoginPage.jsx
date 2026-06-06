@@ -129,11 +129,11 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (resendCooldown <= 0) return;
-  
+
     const timer = setTimeout(() => {
       setResendCooldown((current) => current - 1);
     }, 1000);
-  
+
     return () => clearTimeout(timer);
   }, [resendCooldown]);
 
@@ -144,12 +144,12 @@ export default function LoginPage() {
         toast.error("OTP purpose not found.");
         return;
       }
-  
+
       await resendOtp({
         email: formData.email,
         purpose: otpPurpose,
       });
-  
+
       toast.success("OTP resent successfully.");
       setResendCooldown(30);
     } catch (err) {

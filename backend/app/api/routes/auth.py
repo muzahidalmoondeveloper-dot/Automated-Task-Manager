@@ -1,3 +1,5 @@
+import re
+import secrets
 import time
 import uuid
 from datetime import datetime, timezone
@@ -14,7 +16,7 @@ from app.core.dependencies import get_current_user
 from app.core.org_roles import ORG_OWNER
 from app.core.rate_limiter import RateLimiter, get_rate_limiter
 from app.core.redis_client import get_redis
-from app.core.roles import TEAM_MEMBER
+from app.core.roles import ADMIN, TEAM_MEMBER
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -50,6 +52,15 @@ from app.services.auth_security_service import AuthSecurityService, get_client_i
 from fastapi import status as http_status
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
+
+
+def _slugify_name(name: str) -> str:
+    """Convert a display name to a URL-safe slug."""
+    s = name.lower().strip()
+    s = re.sub(r"[^\w\s-]", "", s)
+    s = re.sub(r"[\s_]+", "-", s)
+    s = re.sub(r"-+", "-", s).strip("-")
+    return (s or "org")[:80]
 
 _INVITATION_EXPIRED = ErrorDef(
     code="INVITATION_EXPIRED",
@@ -239,11 +250,31 @@ async def verify_register_otp(
 
     user.email_verified_at = datetime.now(timezone.utc)
     user.is_active = True
+    user.role = ADMIN  # owner has full app-level access
+    await db.flush()
+
+    # Auto-create a personal organization and make the registrant its owner
+    org_repo = OrganizationRepository(db)
+    base_slug = _slugify_name(user.full_name)
+    slug = base_slug
+    for _ in range(10):
+        if not await org_repo.slug_exists(slug):
+            break
+        slug = f"{base_slug}-{secrets.token_hex(3)}"
+
+    org = await org_repo.create(
+        name=f"{user.full_name}'s Organization",
+        slug=slug,
+        owner_id=user.id,
+        plan="free",
+    )
+    await org_repo.add_member(org.id, user.id, role=ORG_OWNER)
+    await org_repo.get_or_create_subscription(org.id, plan="free")
+
     await db.commit()
     await db.refresh(user)
 
-    # New user has no org yet — issue token without org context
-    return await _issue_token_pair(user, db, token_cache)
+    return await _issue_token_pair(user, db, token_cache, org_id=org.id, org_role=ORG_OWNER)
 
 
 # ── Login ─────────────────────────────────────────────────────────────────────
