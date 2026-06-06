@@ -25,7 +25,7 @@ class UserCreate(BaseModel):
     @field_validator("email")
     @classmethod
     def validate_email(cls, value: EmailStr) -> str:
-        return str(value).lower().strip()
+        return str(value).strip()
 
     @field_validator("role")
     @classmethod

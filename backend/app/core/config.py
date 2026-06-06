@@ -80,11 +80,11 @@ class Settings(BaseSettings):
     GENERIC_LLM_API_URL: str | None = None
     GENERIC_LLM_API_KEY: str | None = None
 
-    SMTP_HOST: str | None = None
+    SMTP_HOST: str  = "smtp.ethereal.email"
     SMTP_PORT: int = 587
-    SMTP_USERNAME: str | None = None
-    SMTP_PASSWORD: str | None = None
-    SMTP_FROM_EMAIL: str = "no-reply@example.com"
+    SMTP_USERNAME: str = "ova40@ethereal.email"
+    SMTP_PASSWORD: str = "mM2HNjjBC7BBptgusP"
+    SMTP_FROM_EMAIL: str = "smtp.ethereal.email"
     SMTP_FROM_NAME: str = "Automated Task Manager"
 
     # ── Redis ────────────────────────────────────────────────────────────────

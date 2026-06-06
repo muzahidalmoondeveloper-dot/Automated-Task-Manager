@@ -10,7 +10,6 @@ from app.models.auth_security import EmailOTP, IPAuthLock
 from app.models.user import User
 from app.services.email_service import EmailService
 
-
 MAX_FAILED_ATTEMPTS = 3
 LOCK_MINUTES = 3
 OTP_EXPIRE_MINUTES = 10
@@ -91,14 +90,15 @@ class AuthSecurityService:
             await self.db.commit()
 
     async def create_and_send_otp(
-        self,
-        *,
-        user: User | None,
-        email: str,
-        purpose: str,
+            self,
+            *,
+            user: User | None,
+            email: str,
+            purpose: str,
     ) -> None:
         normalized_email = normalize_email(email)
         otp_code = generate_otp()
+        print("register-otp", otp_code)
 
         await self.db.execute(
             update(EmailOTP)
@@ -120,19 +120,19 @@ class AuthSecurityService:
         self.db.add(otp)
         await self.db.commit()
 
-        self.email_service.send_otp_email(
+        await self.email_service.send_otp_email(
             to_email=normalized_email,
             otp_code=otp_code,
             purpose=purpose,
         )
 
     async def verify_otp(
-        self,
-        *,
-        email: str,
-        otp_code: str,
-        purpose: str,
-        ip_address: str,
+            self,
+            *,
+            email: str,
+            otp_code: str,
+            purpose: str,
+            ip_address: str,
     ) -> EmailOTP:
         await self.check_ip_lock(ip_address)
 

@@ -119,6 +119,7 @@ app.include_router(rocks.router, prefix=settings.API_PREFIX)
 app.include_router(kpi.router, prefix=settings.API_PREFIX)
 app.include_router(issues.router, prefix=settings.API_PREFIX)
 
+
 @app.get("/health")
 async def health_check():
     return {"status": "ok"}
@@ -132,6 +133,7 @@ if FRONTEND_DIST.exists():
         StaticFiles(directory=FRONTEND_DIST / "assets"),
         name="assets",
     )
+
 
     @app.get("/{full_path:path}")
     async def serve_react_app(full_path: str):

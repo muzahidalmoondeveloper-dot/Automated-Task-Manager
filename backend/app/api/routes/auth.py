@@ -81,7 +81,7 @@ async def _issue_token_pair(
 @router.post("/register")
 async def register(
     payload: UserCreate,
-    request: Request,
+    request: Request ,
     db: AsyncSession = Depends(get_db),
     rate_limiter: RateLimiter = Depends(get_rate_limiter),
     redis: Redis = Depends(get_redis),
@@ -119,7 +119,9 @@ async def register(
             raise AuthError.email_exists()
 
         payload.role = TEAM_MEMBER
+        print(payload)
         user = await user_repo.create(payload)
+        print(user)
         user.email_verified_at = None
         user.is_active = False
         await db.commit()
@@ -398,8 +400,8 @@ async def resend_otp(
     db: AsyncSession = Depends(get_db),
     rate_limiter: RateLimiter = Depends(get_rate_limiter),
 ):
-    if await rate_limiter.is_rate_limited("resend_otp", request):
-        raise AuthError.rate_limited()
+    # if await rate_limiter.is_rate_limited("resend_otp", request):
+    #     raise AuthError.rate_limited()
 
     if payload.purpose not in {"register", "login", "reset_password"}:
         raise AuthError.otp_purpose_invalid()

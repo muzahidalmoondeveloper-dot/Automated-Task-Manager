@@ -11,7 +11,7 @@ class LoginRequest(BaseModel):
 class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str
-    expires_at: int
+    expires_at: int | None
     token_type: str = "bearer"
     user: UserRead
 
