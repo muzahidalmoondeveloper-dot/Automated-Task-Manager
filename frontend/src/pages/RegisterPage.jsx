@@ -25,8 +25,12 @@ const initialRegisterForm = {
   full_name: "",
   email: "",
   password: "",
+  retype_password: "",
   role: "team_member",
 };
+
+  const regex = /^(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]).{8,}$/;
+
 
 export default function RegisterPage() {
   const navigate = useNavigate();
@@ -34,6 +38,8 @@ export default function RegisterPage() {
 
   const [step, setStep] = useState("register");
   const [formData, setFormData] = useState(initialRegisterForm);
+  const [isValidPassword,setIsValidPassword] = useState(false);
+  const [isPasswordMatch,setIsPasswordMatch] = useState(false);
   const [otpCode, setOtpCode] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -51,6 +57,15 @@ export default function RegisterPage() {
     return () => clearTimeout(timer);
   }, [resendCooldown]);
 
+  useEffect(() => {
+    const result = regex.test(formData.password);
+    console.log("pass",result);
+    setIsValidPassword(result);
+    const match = formData.password === formData.retype_password;
+    setIsPasswordMatch(match);
+    console.log("match-pass",match)
+  },[formData.password,formData.retype_password]);
+
   function handleChange(event) {
     const { name, value } = event.target;
 
@@ -60,10 +75,16 @@ export default function RegisterPage() {
     }));
   }
 
+  
+
   async function handleRegister(event) {
     event.preventDefault();
 
     try {
+      if(!isValidPassword || !isPasswordMatch){
+        toast.error("password is invalid check")
+        return
+      } 
       setIsSubmitting(true);
 
       const response = await authApi.register(formData);
@@ -171,6 +192,43 @@ export default function RegisterPage() {
                   <EyeIcon visible={showPassword} />
                 </button>
               </div>
+              
+                {
+                !isValidPassword ? <p>password format is invalid</p> : null
+                }
+              
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">
+                Repeat Password
+              </label>
+
+              <div className="relative">
+                <input
+                  name="retype_password"
+                  type={showPassword ? "text" : "password"}
+                  value={formData.retype_password}
+                  onChange={handleChange}
+                  required
+                  minLength={8}
+                
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 pr-11 text-sm outline-none transition
+                   focus:border-slate-900 focus:ring-2 focus:ring-slate-200 "
+                  placeholder="Min. 8 characters"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-slate-400 hover:text-slate-700 transition-colors"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                >
+                  <EyeIcon visible={showPassword} />
+                </button>
+              </div>
+              {
+                !isPasswordMatch ? <p>password doesnot match invalid</p> : null
+              }
             </div>
 
             <button
