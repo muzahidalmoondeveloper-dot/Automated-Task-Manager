@@ -1,4 +1,5 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api";
+import conf from "../conf/conf";
+const API_BASE_URL = conf.viteApiBaseUrl || "/local-host";
 
 export function getAccessToken() {
   return localStorage.getItem("access_token");
@@ -24,7 +25,7 @@ async function request(endpoint, options = {}) {
     headers.Authorization = `Bearer ${token}`;
   }
 
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+  const response = await fetch(`${API_BASE_URL}/api${endpoint}`, {
     ...options,
     headers,
   });

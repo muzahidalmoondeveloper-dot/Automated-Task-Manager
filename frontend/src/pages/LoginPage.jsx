@@ -35,8 +35,8 @@ export default function LoginPage() {
   const [step, setStep] = useState("login");
 
   const [formData, setFormData] = useState({
-    email: "",
-    password: "",
+    email: "shimantasarker504@gmail.com",
+    password: "Shimanta@123",
   });
 
   const [otpCode, setOtpCode] = useState("");
