@@ -1,4 +1,5 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "/local-host";
+import conf from "../conf/conf";
+const API_BASE_URL = conf.viteApiBaseUrl || "/local-host";
 
 export function getAccessToken() {
   return localStorage.getItem("access_token");
