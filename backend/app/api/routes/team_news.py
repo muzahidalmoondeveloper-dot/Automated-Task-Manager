@@ -18,7 +18,10 @@ async def list_news(
 ):
     result = await db.execute(
         select(TeamNews)
-        .where(TeamNews.team_id == team_id)
+        .where(
+            TeamNews.team_id == team_id,
+            TeamNews.organization_id == tenant.organization_id,
+        )
         .order_by(TeamNews.created_at.desc())
     )
     return result.scalars().all()
@@ -31,7 +34,7 @@ async def create_news(
     db: AsyncSession = Depends(get_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
-    news = TeamNews(team_id=team_id, **payload.model_dump())
+    news = TeamNews(team_id=team_id, organization_id=tenant.organization_id, **payload.model_dump())
     db.add(news)
     await db.commit()
     await db.refresh(news)
@@ -47,7 +50,11 @@ async def update_news(
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     result = await db.execute(
-        select(TeamNews).where(TeamNews.id == news_id, TeamNews.team_id == team_id)
+        select(TeamNews).where(
+            TeamNews.id == news_id,
+            TeamNews.team_id == team_id,
+            TeamNews.organization_id == tenant.organization_id,
+        )
     )
     news = result.scalar_one_or_none()
     if not news:
@@ -67,7 +74,11 @@ async def delete_news(
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     result = await db.execute(
-        select(TeamNews).where(TeamNews.id == news_id, TeamNews.team_id == team_id)
+        select(TeamNews).where(
+            TeamNews.id == news_id,
+            TeamNews.team_id == team_id,
+            TeamNews.organization_id == tenant.organization_id,
+        )
     )
     news = result.scalar_one_or_none()
     if not news:

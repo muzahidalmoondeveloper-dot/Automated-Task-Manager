@@ -19,7 +19,7 @@ from app.repositories.project_repository import ProjectRepository
 from app.repositories.task_repository import TaskRepository
 from app.repositories.team_repository import TeamRepository
 from app.repositories.user_repository import UserRepository
-from app.core.roles import ADMIN
+from app.core.org_roles import ADMIN
 from app.schemas.task import TaskCreate
 from app.services.ai_task_extractor import AITaskExtractor
 from app.services.integrations.microsoft_graph import MicrosoftGraphService

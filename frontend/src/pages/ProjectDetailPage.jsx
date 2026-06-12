@@ -100,11 +100,11 @@ export default function ProjectDetailPage() {
   const [error, setError] = useState("");
 
   const isEditing = editingTaskId !== null;
-  const canManageTasks = user?.role === "admin" || user?.role === "team_manager";
+  const canManageTasks = user?.role === "owner" || user?.role === "admin" || user?.role === "team_manager";
 
   const assignees = useMemo(() => {
     return users.filter((item) =>
-      ["admin", "team_manager", "team_member"].includes(item.role)
+      ["owner", "admin", "team_manager", "team_member"].includes(item.role)
     );
   }, [users]);
 

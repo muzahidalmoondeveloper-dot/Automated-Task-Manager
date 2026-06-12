@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth_errors import AppException, AuthError, ErrorDef
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
-from app.core.org_roles import ORG_MEMBER, ORG_OWNER
+from app.core.org_roles import OWNER, TEAM_MEMBER
 from app.core.plan_limits import get_plan_limits
 from app.core.security import create_access_token, create_refresh_token, hash_token
 from app.core.tenant import (
@@ -92,11 +92,16 @@ async def _issue_org_token_pair(
     )
     await db.commit()
     await token_cache.clear_user_access_token_blacklist(str(user.id))
+
+    # Reflect the user's role in *this* organization, not their global default —
+    # keeps the returned profile in sync with the tenant context just switched into.
+    user_read = UserRead.model_validate(user).model_copy(update={"role": org_role})
+
     return TokenResponse(
         access_token=access_token,
         refresh_token=refresh_str,
         expires_at=exp,
-        user=UserRead.model_validate(user),
+        user=user_read,
     )
 
 
@@ -123,11 +128,11 @@ async def create_organization(
         owner_id=current_user.id,
         plan="free",
     )
-    membership = await repo.add_member(org.id, current_user.id, role=ORG_OWNER)
+    membership = await repo.add_member(org.id, current_user.id, role=OWNER)
     await repo.get_or_create_subscription(org.id, plan="free")
     await db.commit()
 
-    return await _issue_org_token_pair(current_user, org.id, ORG_OWNER, db, token_cache)
+    return await _issue_org_token_pair(current_user, org.id, OWNER, db, token_cache)
 
 
 # ── Read / update / deactivate ────────────────────────────────────────────────
@@ -209,7 +214,7 @@ async def update_member_role(
     tenant: TenantContext = Depends(require_org_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    if user_id == tenant.organization.owner_id and payload.role != ORG_OWNER:
+    if user_id == tenant.organization.owner_id and payload.role != OWNER:
         raise AppException(_CANNOT_REMOVE_OWNER)
 
     repo = OrganizationRepository(db)

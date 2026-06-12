@@ -649,15 +649,15 @@ function SidebarContent({
   const profileRef = useRef(null);
 
   const canManageProjects =
-    user?.role === "admin" || user?.role === "team_manager";
+    user?.role === "owner" || user?.role === "admin" || user?.role === "team_manager";
 
   const canManageUsers =
-    user?.role === "admin" || user?.role === "team_manager";
+    user?.role === "owner" || user?.role === "admin" || user?.role === "team_manager";
 
-  const canManageTeams = user?.role === "admin";
+  const canManageTeams = user?.role === "owner" || user?.role === "admin";
 
   const canViewTeams =
-    user?.role === "admin" || user?.role === "team_manager";
+    user?.role === "owner" || user?.role === "admin" || user?.role === "team_manager";
 
   const isTeamMember = user?.role === "team_member";
 

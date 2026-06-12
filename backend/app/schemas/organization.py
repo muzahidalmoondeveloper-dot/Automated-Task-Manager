@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
-from app.core.org_roles import ALL_ORG_ROLES, ORG_MEMBER
+from app.core.org_roles import ALL_ORG_ROLES, TEAM_MEMBER
 from app.core.plan_limits import ALL_PLANS, PlanLimits
 from app.schemas.user import UserRead
 
@@ -90,7 +90,7 @@ class MembershipRead(BaseModel):
 
 class InviteMemberRequest(BaseModel):
     email: EmailStr
-    role: str = ORG_MEMBER
+    role: str = TEAM_MEMBER
 
     @field_validator("role")
     @classmethod

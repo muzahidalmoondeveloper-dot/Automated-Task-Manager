@@ -8,8 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth_errors import AppException, ErrorDef
 from app.core.database import get_db
-from app.core.roles import ADMIN, TEAM_MEMBER
-from app.core.tenant import TenantContext, get_tenant_context, require_org_admin
+from app.core.org_roles import TEAM_MEMBER
+from app.core.tenant import TenantContext, get_tenant_context, require_org_admin, require_org_manager
 from app.models.notification import Notification
 from app.models.task import Task
 from app.models.team import Team, TeamMembership
@@ -114,7 +114,7 @@ async def list_tasks(
     due_date_from: date | None = Query(default=None),
     due_date_to: date | None = Query(default=None),
     overdue: bool = Query(default=False),
-    tenant: TenantContext = Depends(require_org_admin),
+    tenant: TenantContext = Depends(require_org_manager),
 ):
     repo = TaskRepository(tenant.db, tenant.organization_id)
     tasks = await repo.list_all(
@@ -131,7 +131,7 @@ async def list_tasks(
 async def create_task(
     payload: TaskCreate,
     background_tasks: BackgroundTasks,
-    tenant: TenantContext = Depends(require_org_admin),
+    tenant: TenantContext = Depends(require_org_manager),
     db: AsyncSession = Depends(get_db),
 ):
     user_repo = UserRepository(db)
@@ -216,7 +216,7 @@ async def update_task_status(
     repo = TaskRepository(db, tenant.organization_id)
     task = await get_task_or_404(tenant, task_id)
 
-    if tenant.org_role == "member":
+    if tenant.org_role == TEAM_MEMBER:
         if task.assignee_id != tenant.user.id:
             raise HTTPException(status_code=http_status.HTTP_403_FORBIDDEN, detail="You can only update status on tasks assigned to you.")
 
@@ -268,7 +268,7 @@ async def update_task_status(
 async def approve_task(
     task_id: int,
     background_tasks: BackgroundTasks,
-    tenant: TenantContext = Depends(require_org_admin),
+    tenant: TenantContext = Depends(require_org_manager),
     db: AsyncSession = Depends(get_db),
 ):
     task = await get_task_or_404(tenant, task_id)
@@ -299,7 +299,7 @@ async def assign_task_back(
     task_id: int,
     payload: AssignBackRequest,
     background_tasks: BackgroundTasks,
-    tenant: TenantContext = Depends(require_org_admin),
+    tenant: TenantContext = Depends(require_org_manager),
     db: AsyncSession = Depends(get_db),
 ):
     task = await get_task_or_404(tenant, task_id)
@@ -328,7 +328,7 @@ async def update_task(
     task_id: int,
     payload: TaskUpdate,
     background_tasks: BackgroundTasks,
-    tenant: TenantContext = Depends(require_org_admin),
+    tenant: TenantContext = Depends(require_org_manager),
     db: AsyncSession = Depends(get_db),
 ):
     repo = TaskRepository(db, tenant.organization_id)
@@ -359,7 +359,7 @@ async def update_task(
 
 
 @router.delete("/{task_id}", status_code=http_status.HTTP_204_NO_CONTENT)
-async def delete_task(task_id: int, tenant: TenantContext = Depends(require_org_admin)):
+async def delete_task(task_id: int, tenant: TenantContext = Depends(require_org_manager)):
     task = await get_task_or_404(tenant, task_id)
     await TaskRepository(tenant.db, tenant.organization_id).delete(task)
     return None

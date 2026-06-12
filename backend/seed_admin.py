@@ -6,8 +6,7 @@ from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal
-from app.core.org_roles import ORG_OWNER
-from app.core.roles import ADMIN
+from app.core.org_roles import ADMIN, ORG_OWNER
 from app.models.organization import Organization, OrganizationMembership, Subscription
 from app.repositories.user_repository import UserRepository
 from app.schemas.user import UserCreate

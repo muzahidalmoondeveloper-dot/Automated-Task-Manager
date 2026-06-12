@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth_errors import AppException, ErrorDef
 from app.core.database import get_db
 from app.core.org_roles import ORG_MANAGEMENT_ROLES
-from app.core.tenant import TenantContext, get_tenant_context, require_org_admin
+from app.core.tenant import TenantContext, get_tenant_context, require_org_admin, require_org_manager
 from app.models.team import Team
 from app.repositories.team_repository import TeamRepository
 from app.repositories.user_repository import UserRepository
@@ -47,7 +47,7 @@ async def list_teams(tenant: TenantContext = Depends(get_tenant_context)):
 @router.post("", response_model=TeamDetailRead, status_code=status.HTTP_201_CREATED)
 async def create_team(
     payload: TeamCreate,
-    tenant: TenantContext = Depends(require_org_admin),
+    tenant: TenantContext = Depends(require_org_manager),
     db: AsyncSession = Depends(get_db),
 ):
     limits = tenant.plan_limits
@@ -85,7 +85,7 @@ async def get_team(team_id: int, tenant: TenantContext = Depends(get_tenant_cont
 async def update_team(
     team_id: int,
     payload: TeamUpdate,
-    tenant: TenantContext = Depends(require_org_admin),
+    tenant: TenantContext = Depends(require_org_manager),
     db: AsyncSession = Depends(get_db),
 ):
     repo = TeamRepository(db, tenant.organization_id)
@@ -99,7 +99,7 @@ async def update_team(
 @router.delete("/{team_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_team(
     team_id: int,
-    tenant: TenantContext = Depends(require_org_admin),
+    tenant: TenantContext = Depends(require_org_manager),
     db: AsyncSession = Depends(get_db),
 ):
     repo = TeamRepository(db, tenant.organization_id)

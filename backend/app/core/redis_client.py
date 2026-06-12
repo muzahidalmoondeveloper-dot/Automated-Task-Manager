@@ -15,6 +15,7 @@ async def get_redis() -> Redis:
             settings.REDIS_URL,
             decode_responses=True,
             max_connections=20,
+            protocol=2,  # Redis 5.x doesn't support RESP3 (HELLO 3); force RESP2
         )
         _redis_client = Redis(connection_pool=_redis_pool)
 

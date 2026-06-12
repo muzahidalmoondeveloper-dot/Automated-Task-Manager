@@ -392,7 +392,7 @@ function TaskTableRow({
 export default function TasksPage() {
   const { user } = useAuth();
 
-  const canManageTasks = user?.role === "admin" || user?.role === "team_manager";
+  const canManageTasks = user?.role === "owner" || user?.role === "admin" || user?.role === "team_manager";
   const isTeamMember   = user?.role === "team_member";
 
   // Primary view tab
@@ -579,7 +579,7 @@ export default function TasksPage() {
     return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
   }, [allTasks, teams]);
 
-  const assignees = useMemo(() => users.filter((u) => ["admin", "team_manager", "team_member"].includes(u.role)), [users]);
+  const assignees = useMemo(() => users.filter((u) => ["owner", "admin", "team_manager", "team_member"].includes(u.role)), [users]);
 
   // ─── Helpers ────────────────────────────────────────────────────────────────
 

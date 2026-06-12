@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth_errors import AppException, AuthError, ErrorDef, TokenError
 from app.core.database import get_db
-from app.core.org_roles import ORG_ADMIN, ORG_MANAGEMENT_ROLES, ORG_OWNER
+from app.core.org_roles import APP_MANAGEMENT_ROLES, OWNER, ORG_MANAGEMENT_ROLES
 from app.core.plan_limits import PlanLimits, get_plan_limits
 from app.core.security import decode_access_token
 from app.core.token_cache import TokenCache, get_token_cache
@@ -60,6 +60,11 @@ _ORG_OWNER_REQUIRED = ErrorDef(
     status=http_status.HTTP_403_FORBIDDEN,
     message="Organization owner access required.",
 )
+_ORG_MANAGER_REQUIRED = ErrorDef(
+    code="ORG_MANAGER_REQUIRED",
+    status=http_status.HTTP_403_FORBIDDEN,
+    message="Team manager, admin, or owner access required.",
+)
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -70,6 +75,7 @@ class TenantContext:
     organization: Organization
     membership: OrganizationMembership
     user: User
+    db: AsyncSession
 
     @property
     def plan_limits(self) -> PlanLimits:
@@ -81,11 +87,17 @@ class TenantContext:
 
     @property
     def is_owner(self) -> bool:
-        return self.membership.role == ORG_OWNER
+        return self.membership.role == OWNER
 
     @property
     def is_admin_or_owner(self) -> bool:
+        """True for Owner and Admin — org-level administration."""
         return self.membership.role in ORG_MANAGEMENT_ROLES
+
+    @property
+    def is_manager_or_above(self) -> bool:
+        """True for Owner, Admin, and Team Manager — app-level management."""
+        return self.membership.role in APP_MANAGEMENT_ROLES
 
 
 async def get_tenant_context(
@@ -158,6 +170,7 @@ async def get_tenant_context(
         organization=organization,
         membership=membership,
         user=user,
+        db=db,
     )
 
 
@@ -166,6 +179,7 @@ async def get_tenant_context(
 async def require_org_admin(
     tenant: TenantContext = Depends(get_tenant_context),
 ) -> TenantContext:
+    """Owner or Admin only — org settings, billing, member management."""
     if not tenant.is_admin_or_owner:
         raise AppException(_ORG_ADMIN_REQUIRED)
     return tenant
@@ -174,8 +188,18 @@ async def require_org_admin(
 async def require_org_owner(
     tenant: TenantContext = Depends(get_tenant_context),
 ) -> TenantContext:
+    """Owner only — destructive org actions (delete, transfer)."""
     if not tenant.is_owner:
         raise AppException(_ORG_OWNER_REQUIRED)
+    return tenant
+
+
+async def require_org_manager(
+    tenant: TenantContext = Depends(get_tenant_context),
+) -> TenantContext:
+    """Owner, Admin, or Team Manager — teams / projects / tasks mutations."""
+    if not tenant.is_manager_or_above:
+        raise AppException(_ORG_MANAGER_REQUIRED)
     return tenant
 
 

@@ -1766,7 +1766,7 @@ export default function OrganizationPage() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const activeTab = searchParams.get("tab") || "core-values";
-  const canManage = user?.role === "admin" || user?.role === "team_manager";
+  const canManage = user?.role === "owner" || user?.role === "admin" || user?.role === "team_manager";
 
   function setTab(tabId) {
     setSearchParams({ tab: tabId });

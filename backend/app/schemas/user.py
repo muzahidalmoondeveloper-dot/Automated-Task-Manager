@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
-from app.core.roles import ADMIN, TEAM_MANAGER, TEAM_MEMBER
+from app.core.org_roles import ADMIN, TEAM_MANAGER, TEAM_MEMBER
 
 
 USER_ROLES = {ADMIN, TEAM_MANAGER, TEAM_MEMBER}

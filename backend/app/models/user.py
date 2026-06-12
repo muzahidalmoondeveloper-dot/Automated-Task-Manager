@@ -4,7 +4,7 @@ from sqlalchemy import Boolean, DateTime, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
-from app.core.roles import TEAM_MEMBER
+from app.core.org_roles import TEAM_MEMBER
 
 
 class User(Base):

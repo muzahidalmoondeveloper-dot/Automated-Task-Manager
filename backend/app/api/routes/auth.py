@@ -1,5 +1,3 @@
-import re
-import secrets
 import time
 import uuid
 from datetime import datetime, timezone
@@ -13,10 +11,9 @@ from app.core.access_token_bearer import AccessTokenBearer
 from app.core.auth_errors import AppException, AuthError, ErrorDef, TokenError
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
-from app.core.org_roles import ORG_OWNER
 from app.core.rate_limiter import RateLimiter, get_rate_limiter
 from app.core.redis_client import get_redis
-from app.core.roles import ADMIN, TEAM_MEMBER
+from app.core.org_roles import TEAM_MEMBER
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -53,14 +50,6 @@ from fastapi import status as http_status
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
-
-def _slugify_name(name: str) -> str:
-    """Convert a display name to a URL-safe slug."""
-    s = name.lower().strip()
-    s = re.sub(r"[^\w\s-]", "", s)
-    s = re.sub(r"[\s_]+", "-", s)
-    s = re.sub(r"-+", "-", s).strip("-")
-    return (s or "org")[:80]
 
 _INVITATION_EXPIRED = ErrorDef(
     code="INVITATION_EXPIRED",
@@ -114,11 +103,18 @@ async def _issue_token_pair(
     await db.commit()
     await token_cache.clear_user_access_token_blacklist(str(user.id))
 
+    user_read = UserRead.model_validate(user)
+    if org_role is not None:
+        # The role that matters to the frontend is the user's role within the
+        # *current* organization, not their global default — override it here
+        # so `user.role` always reflects org_role from the active tenant context.
+        user_read = user_read.model_copy(update={"role": org_role})
+
     return TokenResponse(
         access_token=access_token,
         refresh_token=refresh_str,
         expires_at=exp,
-        user=UserRead.model_validate(user),
+        user=user_read,
     )
 
 
@@ -250,31 +246,14 @@ async def verify_register_otp(
 
     user.email_verified_at = datetime.now(timezone.utc)
     user.is_active = True
-    user.role = ADMIN  # owner has full app-level access
     await db.flush()
-
-    # Auto-create a personal organization and make the registrant its owner
-    org_repo = OrganizationRepository(db)
-    base_slug = _slugify_name(user.full_name)
-    slug = base_slug
-    for _ in range(10):
-        if not await org_repo.slug_exists(slug):
-            break
-        slug = f"{base_slug}-{secrets.token_hex(3)}"
-
-    org = await org_repo.create(
-        name=f"{user.full_name}'s Organization",
-        slug=slug,
-        owner_id=user.id,
-        plan="free",
-    )
-    await org_repo.add_member(org.id, user.id, role=ORG_OWNER)
-    await org_repo.get_or_create_subscription(org.id, plan="free")
-
     await db.commit()
     await db.refresh(user)
 
-    return await _issue_token_pair(user, db, token_cache, org_id=org.id, org_role=ORG_OWNER)
+    # No organization yet — issue a token without org context so the frontend's
+    # ProtectedRoute redirects the user to /setup/organization to create their
+    # own workspace (instead of auto-creating one on their behalf).
+    return await _issue_token_pair(user, db, token_cache, org_id=None, org_role=None)
 
 
 # ── Login ─────────────────────────────────────────────────────────────────────
@@ -590,8 +569,17 @@ async def logout(
 # ── Profile & OTP helpers ────────────────────────────────────────────────────
 
 @router.get("/me", response_model=AuthenticatedUserResponse)
-async def get_me(current_user: User = Depends(get_current_user)):
-    return AuthenticatedUserResponse(user=UserRead.model_validate(current_user))
+async def get_me(
+    current_user: User = Depends(get_current_user),
+    token_payload: dict = Depends(AccessTokenBearer()),
+):
+    user_read = UserRead.model_validate(current_user)
+    org_role = token_payload.get("org_role")
+    if org_role is not None:
+        # Reflect the user's role in their *current* organization rather than
+        # their global default — keeps the profile in sync with the active tenant.
+        user_read = user_read.model_copy(update={"role": org_role})
+    return AuthenticatedUserResponse(user=user_read)
 
 
 @router.post("/resend-otp")

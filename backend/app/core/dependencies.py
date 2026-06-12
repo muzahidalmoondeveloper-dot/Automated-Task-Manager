@@ -1,10 +1,9 @@
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth_errors import AuthError, TokenError
 from app.core.database import get_db
-from app.core.roles import ADMIN, TEAM_MANAGER
 from app.core.security import decode_access_token
 from app.core.token_cache import TokenCache, get_token_cache
 from app.models.user import User
@@ -49,25 +48,3 @@ async def get_current_user(
         raise AuthError.account_inactive()
 
     return user
-
-
-async def require_admin(
-    current_user: User = Depends(get_current_user),
-) -> User:
-    if current_user.role != ADMIN:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required.",
-        )
-    return current_user
-
-
-async def require_admin_or_team_manager(
-    current_user: User = Depends(get_current_user),
-) -> User:
-    if current_user.role not in {ADMIN, TEAM_MANAGER}:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin or Team Manager access required.",
-        )
-    return current_user

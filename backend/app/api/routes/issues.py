@@ -17,7 +17,10 @@ async def list_issues(
     db: AsyncSession = Depends(get_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
-    q = select(Issue).where(Issue.team_id == team_id)
+    q = select(Issue).where(
+        Issue.team_id == team_id,
+        Issue.organization_id == tenant.organization_id,
+    )
     if timeframe:
         q = q.where(Issue.timeframe == timeframe)
     q = q.order_by(Issue.created_at.desc())
@@ -32,7 +35,7 @@ async def create_issue(
     db: AsyncSession = Depends(get_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
-    issue = Issue(team_id=team_id, **payload.model_dump())
+    issue = Issue(team_id=team_id, organization_id=tenant.organization_id, **payload.model_dump())
     db.add(issue)
     await db.commit()
     await db.refresh(issue)
@@ -48,7 +51,11 @@ async def update_issue(
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     result = await db.execute(
-        select(Issue).where(Issue.id == issue_id, Issue.team_id == team_id)
+        select(Issue).where(
+            Issue.id == issue_id,
+            Issue.team_id == team_id,
+            Issue.organization_id == tenant.organization_id,
+        )
     )
     issue = result.scalar_one_or_none()
     if not issue:
@@ -68,7 +75,11 @@ async def delete_issue(
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     result = await db.execute(
-        select(Issue).where(Issue.id == issue_id, Issue.team_id == team_id)
+        select(Issue).where(
+            Issue.id == issue_id,
+            Issue.team_id == team_id,
+            Issue.organization_id == tenant.organization_id,
+        )
     )
     issue = result.scalar_one_or_none()
     if not issue:

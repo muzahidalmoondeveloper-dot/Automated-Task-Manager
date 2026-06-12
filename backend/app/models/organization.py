@@ -5,6 +5,7 @@ from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, Uni
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+from app.core.org_roles import TEAM_MEMBER
 
 
 class Organization(Base):
@@ -72,8 +73,8 @@ class OrganizationMembership(Base):
         nullable=False,
         index=True,
     )
-    # owner | admin | member
-    role: Mapped[str] = mapped_column(String(50), nullable=False, default="member", index=True)
+    # owner | admin | team_manager | team_member
+    role: Mapped[str] = mapped_column(String(50), nullable=False, default=TEAM_MEMBER, index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     joined_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -99,7 +100,7 @@ class OrganizationInvitation(Base):
         index=True,
     )
     email: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
-    role: Mapped[str] = mapped_column(String(50), nullable=False, default="member")
+    role: Mapped[str] = mapped_column(String(50), nullable=False, default=TEAM_MEMBER)
     invited_by_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,

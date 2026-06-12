@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.org_roles import ORG_MEMBER, ORG_OWNER
+from app.core.org_roles import OWNER, TEAM_MEMBER
 from app.models.organization import (
     Organization,
     OrganizationInvitation,
@@ -102,7 +102,7 @@ class OrganizationRepository:
         return result.scalar_one_or_none()
 
     async def add_member(
-        self, org_id: uuid.UUID, user_id: int, role: str = ORG_MEMBER
+        self, org_id: uuid.UUID, user_id: int, role: str = TEAM_MEMBER
     ) -> OrganizationMembership:
         membership = OrganizationMembership(
             organization_id=org_id,

@@ -10,14 +10,34 @@ from app.schemas.kpi import KPICreate, KPIUpdate, KPIOut, KPIEntryUpsert, KPIEnt
 router = APIRouter(tags=["kpis"])
 
 
-async def _get_kpi_or_404(db: AsyncSession, team_id: int, kpi_id: int) -> KPI:
+async def _get_kpi_or_404(db: AsyncSession, team_id: int, kpi_id: int, org_id) -> KPI:
     result = await db.execute(
-        select(KPI).where(KPI.id == kpi_id, KPI.team_id == team_id)
+        select(KPI).where(
+            KPI.id == kpi_id,
+            KPI.team_id == team_id,
+            KPI.organization_id == org_id,
+        )
     )
     kpi = result.scalar_one_or_none()
     if not kpi:
         raise HTTPException(status_code=404, detail="KPI not found")
     return kpi
+
+
+async def _get_entry_or_404(db: AsyncSession, kpi_id: int, entry_id: int, org_id) -> KPIEntry:
+    result = await db.execute(
+        select(KPIEntry)
+        .join(KPI, KPIEntry.kpi_id == KPI.id)
+        .where(
+            KPIEntry.id == entry_id,
+            KPIEntry.kpi_id == kpi_id,
+            KPI.organization_id == org_id,
+        )
+    )
+    entry = result.scalar_one_or_none()
+    if not entry:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    return entry
 
 
 @router.get("/teams/{team_id}/kpis", response_model=list[KPIOut])
@@ -27,7 +47,9 @@ async def list_kpis(
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     result = await db.execute(
-        select(KPI).where(KPI.team_id == team_id).order_by(KPI.sort_order, KPI.created_at.desc())
+        select(KPI)
+        .where(KPI.team_id == team_id, KPI.organization_id == tenant.organization_id)
+        .order_by(KPI.sort_order, KPI.created_at.desc())
     )
     return result.scalars().all()
 
@@ -40,7 +62,13 @@ async def reorder_kpis(
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     for item in payload:
-        result = await db.execute(select(KPI).where(KPI.id == item.id, KPI.team_id == team_id))
+        result = await db.execute(
+            select(KPI).where(
+                KPI.id == item.id,
+                KPI.team_id == team_id,
+                KPI.organization_id == tenant.organization_id,
+            )
+        )
         kpi = result.scalar_one_or_none()
         if kpi:
             kpi.sort_order = item.sort_order
@@ -54,7 +82,7 @@ async def create_kpi(
     db: AsyncSession = Depends(get_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
-    kpi = KPI(team_id=team_id, **payload.model_dump())
+    kpi = KPI(team_id=team_id, organization_id=tenant.organization_id, **payload.model_dump())
     db.add(kpi)
     await db.commit()
     await db.refresh(kpi)
@@ -69,7 +97,7 @@ async def update_kpi(
     db: AsyncSession = Depends(get_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
-    kpi = await _get_kpi_or_404(db, team_id, kpi_id)
+    kpi = await _get_kpi_or_404(db, team_id, kpi_id, tenant.organization_id)
     for field, value in payload.model_dump(exclude_none=True).items():
         setattr(kpi, field, value)
     await db.commit()
@@ -84,7 +112,7 @@ async def delete_kpi(
     db: AsyncSession = Depends(get_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
-    kpi = await _get_kpi_or_404(db, team_id, kpi_id)
+    kpi = await _get_kpi_or_404(db, team_id, kpi_id, tenant.organization_id)
     await db.delete(kpi)
     await db.commit()
 
@@ -97,7 +125,7 @@ async def upsert_entry(
     db: AsyncSession = Depends(get_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
-    await _get_kpi_or_404(db, team_id, kpi_id)
+    await _get_kpi_or_404(db, team_id, kpi_id, tenant.organization_id)
     result = await db.execute(
         select(KPIEntry).where(
             and_(
@@ -136,12 +164,7 @@ async def add_entry_note(
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     from datetime import datetime as dt
-    result = await db.execute(
-        select(KPIEntry).where(KPIEntry.id == entry_id, KPIEntry.kpi_id == kpi_id)
-    )
-    entry = result.scalar_one_or_none()
-    if not entry:
-        raise HTTPException(status_code=404, detail="Entry not found")
+    entry = await _get_entry_or_404(db, kpi_id, entry_id, tenant.organization_id)
     notes = list(entry.notes or [])
     notes.append({
         "text": payload.text,
@@ -165,12 +188,7 @@ async def edit_entry_note(
     db: AsyncSession = Depends(get_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
-    result = await db.execute(
-        select(KPIEntry).where(KPIEntry.id == entry_id, KPIEntry.kpi_id == kpi_id)
-    )
-    entry = result.scalar_one_or_none()
-    if not entry:
-        raise HTTPException(status_code=404, detail="Entry not found")
+    entry = await _get_entry_or_404(db, kpi_id, entry_id, tenant.organization_id)
     notes = list(entry.notes or [])
     if note_idx < 0 or note_idx >= len(notes):
         raise HTTPException(status_code=404, detail="Note not found")
@@ -190,12 +208,7 @@ async def delete_entry_note(
     db: AsyncSession = Depends(get_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
-    result = await db.execute(
-        select(KPIEntry).where(KPIEntry.id == entry_id, KPIEntry.kpi_id == kpi_id)
-    )
-    entry = result.scalar_one_or_none()
-    if not entry:
-        raise HTTPException(status_code=404, detail="Entry not found")
+    entry = await _get_entry_or_404(db, kpi_id, entry_id, tenant.organization_id)
     notes = list(entry.notes or [])
     if note_idx < 0 or note_idx >= len(notes):
         raise HTTPException(status_code=404, detail="Note not found")
@@ -214,11 +227,6 @@ async def delete_entry(
     db: AsyncSession = Depends(get_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
-    result = await db.execute(
-        select(KPIEntry).where(KPIEntry.id == entry_id, KPIEntry.kpi_id == kpi_id)
-    )
-    entry = result.scalar_one_or_none()
-    if not entry:
-        raise HTTPException(status_code=404, detail="Entry not found")
+    entry = await _get_entry_or_404(db, kpi_id, entry_id, tenant.organization_id)
     await db.delete(entry)
     await db.commit()

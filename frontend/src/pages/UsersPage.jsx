@@ -6,10 +6,13 @@ import { teamApi } from "../api/teamApi";
 import { useAuth } from "../context/AuthContext";
 
 const ROLE_OPTIONS = [
+  { value: "owner", label: "Owner" },
   { value: "admin", label: "Admin" },
   { value: "team_manager", label: "Team Manager" },
   { value: "team_member", label: "Team Member" },
 ];
+
+const ASSIGNABLE_ROLES = ROLE_OPTIONS.filter((r) => r.value !== "owner");
 
 const initialForm = {
   full_name: "",
@@ -108,9 +111,9 @@ export default function UsersPage() {
   const [error, setError] = useState("");
 
   const isEditing = editingUserId !== null;
-  const isAdmin = user?.role === "admin";
+  const isAdmin = user?.role === "owner" || user?.role === "admin";
   const isTeamManager = user?.role === "team_manager";
-  const canCreateAdmin = user?.role === "admin";
+  const canCreateAdmin = user?.role === "owner" || user?.role === "admin";
 
   const managedTeams = useMemo(
     () => teams.filter((t) => t.team_manager_id === user?.id),
@@ -118,7 +121,7 @@ export default function UsersPage() {
   );
 
   const availableRoles = useMemo(() => {
-    return ROLE_OPTIONS.filter((role) => {
+    return ASSIGNABLE_ROLES.filter((role) => {
       if (canCreateAdmin) return true;
       return role.value === "team_member";
     });

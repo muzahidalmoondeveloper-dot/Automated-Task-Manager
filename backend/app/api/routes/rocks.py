@@ -17,7 +17,9 @@ async def list_rocks(
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     result = await db.execute(
-        select(Rock).where(Rock.team_id == team_id).order_by(Rock.created_at.desc())
+        select(Rock)
+        .where(Rock.team_id == team_id, Rock.organization_id == tenant.organization_id)
+        .order_by(Rock.created_at.desc())
     )
     return result.scalars().all()
 
@@ -31,7 +33,7 @@ async def create_rock(
 ):
     milestones_data = payload.milestones or []
     rock_data = payload.model_dump(exclude={"milestones"})
-    rock = Rock(team_id=team_id, **rock_data)
+    rock = Rock(team_id=team_id, organization_id=tenant.organization_id, **rock_data)
     for i, m in enumerate(milestones_data):
         milestone = Milestone(sort_order=i, **m.model_dump(exclude={"id", "sort_order"}))
         rock.milestones.append(milestone)
@@ -50,7 +52,11 @@ async def update_rock(
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     result = await db.execute(
-        select(Rock).where(Rock.id == rock_id, Rock.team_id == team_id)
+        select(Rock).where(
+            Rock.id == rock_id,
+            Rock.team_id == team_id,
+            Rock.organization_id == tenant.organization_id,
+        )
     )
     rock = result.scalar_one_or_none()
     if not rock:
@@ -81,7 +87,11 @@ async def delete_rock(
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     result = await db.execute(
-        select(Rock).where(Rock.id == rock_id, Rock.team_id == team_id)
+        select(Rock).where(
+            Rock.id == rock_id,
+            Rock.team_id == team_id,
+            Rock.organization_id == tenant.organization_id,
+        )
     )
     rock = result.scalar_one_or_none()
     if not rock:

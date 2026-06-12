@@ -18,7 +18,7 @@ from app.repositories.task_repository import TaskRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.project_repository import ProjectRepository
 from app.repositories.team_repository import TeamRepository
-from app.core.roles import TEAM_MEMBER
+from app.core.org_roles import TEAM_MEMBER
 from app.schemas.chat import ChatAction, ChatMessageResponse
 from app.schemas.task import TaskCreate, TaskUpdate
 from app.services.llm import get_llm_provider
@@ -271,6 +271,7 @@ class ChatService:
         user: User,
         message: str,
         session_id: int | None,
+        org_role: str = TEAM_MEMBER,
         file_context: dict | None = None,
     ) -> ChatMessageResponse:
         """
@@ -325,7 +326,7 @@ class ChatService:
 
         # 7. Route to handler (execution uses effective_message so LLM has file text)
         try:
-            reply, actions = await self._route(intent, user, effective_message, history_text)
+            reply, actions = await self._route(intent, user, effective_message, history_text, org_role)
         except Exception as exc:
             logger.exception("Error handling intent %s: %s", intent, exc)
             reply = "I ran into an issue processing that. Could you try rephrasing?"
@@ -396,9 +397,9 @@ class ChatService:
     _TASK_MUTATION_INTENTS = {INTENT_CREATE_TASK, INTENT_UPDATE_TASK, INTENT_DELETE_TASK}
 
     async def _route(
-        self, intent: str, user: User, message: str, history: str
+        self, intent: str, user: User, message: str, history: str, org_role: str = TEAM_MEMBER
     ) -> tuple[str, list[ChatAction]]:
-        if user.role == TEAM_MEMBER and intent in self._TASK_MUTATION_INTENTS:
+        if org_role == TEAM_MEMBER and intent in self._TASK_MUTATION_INTENTS:
             return (
                 "You don't have permission to create, update, or delete tasks through the assistant. "
                 "Please contact your team manager or admin to make task changes.",
@@ -492,7 +493,7 @@ class ChatService:
     async def _handle_list_tasks(
         self, user: User, message: str, history: str = ""
     ) -> tuple[str, list[ChatAction]]:
-        from app.core.roles import ADMIN, TEAM_MANAGER
+        from app.core.org_roles import ADMIN, TEAM_MANAGER
 
         msg_lower = message.lower()
         self_ref = any(w in msg_lower for w in ["my task", "my list", "my todo", "i have", "assigned to me", "my work"])
@@ -534,7 +535,7 @@ class ChatService:
     async def _handle_update_task(
         self, user: User, message: str, history: str = ""
     ) -> tuple[str, list[ChatAction]]:
-        from app.core.roles import ADMIN, TEAM_MANAGER
+        from app.core.org_roles import ADMIN, TEAM_MANAGER
 
         user_prompt = (
             f"Conversation history:\n{history}\n\nUser instruction: {message}"
@@ -634,7 +635,7 @@ class ChatService:
     async def _handle_delete_task(
         self, user: User, message: str, history: str = ""
     ) -> tuple[str, list[ChatAction]]:
-        from app.core.roles import ADMIN, TEAM_MANAGER
+        from app.core.org_roles import ADMIN, TEAM_MANAGER
 
         if user.role not in {ADMIN, TEAM_MANAGER}:
             return "Only admins and team managers can delete tasks. Please ask your manager.", []
@@ -795,7 +796,7 @@ class ChatService:
     async def _handle_db_query(
         self, user: User, message: str, history: str = ""
     ) -> tuple[str, list[ChatAction]]:
-        from app.core.roles import ADMIN, TEAM_MANAGER
+        from app.core.org_roles import ADMIN, TEAM_MANAGER
 
         # Security: refuse any request that attempts data modification
         _destructive = {"insert", "drop", "truncate", "alter"}

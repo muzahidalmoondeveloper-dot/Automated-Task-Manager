@@ -28,9 +28,13 @@ async def list_users(
     db: AsyncSession = Depends(get_db),
 ):
     """List all active users in the current organization."""
-    user_repo = UserRepository(db)
-    users = await user_repo.list_by_org(tenant.organization_id)
-    return [UserRead.model_validate(u) for u in users]
+    from app.repositories.organization_repository import OrganizationRepository
+    org_repo = OrganizationRepository(db)
+    members = await org_repo.list_members(tenant.organization_id)
+    return [
+        UserRead.model_validate(user).model_copy(update={"role": membership.role})
+        for membership, user in members
+    ]
 
 
 @router.post("", response_model=UserRead, status_code=http_status.HTTP_201_CREATED)
@@ -48,15 +52,14 @@ async def create_user(
 
     user = await user_repo.create(payload)
 
-    # Auto-add new user to this organization as a member
+    # Add user to this organization with the role specified in the request.
     from app.repositories.organization_repository import OrganizationRepository
-    from app.core.org_roles import ORG_MEMBER
     org_repo = OrganizationRepository(db)
-    await org_repo.add_member(tenant.organization_id, user.id, ORG_MEMBER)
+    await org_repo.add_member(tenant.organization_id, user.id, payload.role)
     await db.commit()
     await db.refresh(user)
 
-    return UserRead.model_validate(user)
+    return UserRead.model_validate(user).model_copy(update={"role": payload.role})
 
 
 @router.patch("/{user_id}", response_model=UserRead)
@@ -76,7 +79,15 @@ async def update_user(
             raise AppException(_EMAIL_EXISTS)
 
     updated = await user_repo.update(user, payload)
-    return UserRead.model_validate(updated)
+
+    from app.repositories.organization_repository import OrganizationRepository
+    org_repo = OrganizationRepository(db)
+    membership = await org_repo.get_membership(tenant.organization_id, user_id)
+    if membership and payload.role is not None:
+        await org_repo.update_member_role(membership, payload.role)
+        await db.commit()
+    effective_role = membership.role if membership else updated.role
+    return UserRead.model_validate(updated).model_copy(update={"role": effective_role})
 
 
 @router.delete("/{user_id}", status_code=http_status.HTTP_204_NO_CONTENT)

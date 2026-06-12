@@ -720,7 +720,7 @@ export default function TeamDetailPage() {
   const [todoSaving, setTodoSaving] = useState(false);
   const [todoUsers, setTodoUsers] = useState([]);
 
-  const canManageTasks = user?.role === "admin" || user?.role === "team_manager";
+  const canManageTasks = user?.role === "owner" || user?.role === "admin" || user?.role === "team_manager";
 
   const members = useMemo(() => {
     return team?.members || [];

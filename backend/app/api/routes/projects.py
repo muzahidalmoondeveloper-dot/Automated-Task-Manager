@@ -2,7 +2,7 @@ from fastapi import APIRouter
 from fastapi import status as http_status
 
 from app.core.auth_errors import AppException, ErrorDef
-from app.core.tenant import TenantContext, get_tenant_context, require_org_admin
+from app.core.tenant import TenantContext, get_tenant_context, require_org_admin, require_org_manager
 from app.repositories.project_repository import ProjectRepository
 from app.schemas.project import ProjectCreate, ProjectRead, ProjectUpdate
 from fastapi import Depends
@@ -22,7 +22,7 @@ async def list_projects(tenant: TenantContext = Depends(get_tenant_context)):
 @router.post("", response_model=ProjectRead, status_code=http_status.HTTP_201_CREATED)
 async def create_project(
     payload: ProjectCreate,
-    tenant: TenantContext = Depends(require_org_admin),
+    tenant: TenantContext = Depends(require_org_manager),
 ):
     limits = tenant.plan_limits
     if limits.max_projects != -1:
@@ -49,7 +49,7 @@ async def get_project(project_id: int, tenant: TenantContext = Depends(get_tenan
 async def update_project(
     project_id: int,
     payload: ProjectUpdate,
-    tenant: TenantContext = Depends(require_org_admin),
+    tenant: TenantContext = Depends(require_org_manager),
 ):
     repo = ProjectRepository(tenant.db, tenant.organization_id)
     project = await repo.get_by_id(project_id)
@@ -62,7 +62,7 @@ async def update_project(
 @router.delete("/{project_id}", status_code=http_status.HTTP_204_NO_CONTENT)
 async def delete_project(
     project_id: int,
-    tenant: TenantContext = Depends(require_org_admin),
+    tenant: TenantContext = Depends(require_org_manager),
 ):
     repo = ProjectRepository(tenant.db, tenant.organization_id)
     project = await repo.get_by_id(project_id)
