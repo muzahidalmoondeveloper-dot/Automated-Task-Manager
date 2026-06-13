@@ -15,6 +15,7 @@ import TeamDetailPage from "../pages/TeamDetailPage";
 import AppLayout from "../components/layout/AppLayout";
 import IntegrationsPage from "../pages/IntegrationsPage";
 import ProfilePage from "../pages/ProfilePage";
+import LogoutScreen from "../pages/auth/LogoutScreen";
 
 
 export default function AppRouter() {
@@ -24,6 +25,7 @@ export default function AppRouter() {
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
 
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/logout" element={<LogoutScreen/>}/>
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
 

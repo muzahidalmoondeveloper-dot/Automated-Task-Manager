@@ -10,7 +10,12 @@ export const authApi = {
   },
 
   login(payload) {
+    console.log('login-payload',payload);
     return apiClient.post("/auth/login", payload);
+  },
+
+  logout(payload){
+    return apiClient.post("/auth/logout",payload);
   },
 
   verifyLoginOtp(payload) {

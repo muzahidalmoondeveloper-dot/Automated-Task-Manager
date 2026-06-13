@@ -1,3 +1,4 @@
+import asyncio
 import time
 from datetime import datetime, timezone
 
@@ -343,16 +344,18 @@ async def refresh_access_token(
 @router.post("/logout")
 async def logout(
     logout_request: LogoutRequest,
-    token_payload: dict = Depends(AccessTokenBearer()),
+   # token_payload: dict | None = Depends(AccessTokenBearer()),
     db: AsyncSession = Depends(get_db),
     token_cache: TokenCache = Depends(get_token_cache),
 ):
+    await asyncio.sleep(3)
+    return {"message": "Logged out successfully."}
     jti = token_payload.get("jti")
     exp = token_payload.get("exp")
     user_id = token_payload.get("sub")
 
-    if not jti or not exp or not user_id:
-        raise TokenError.invalid("Invalid token payload.")
+    # if not jti or not exp or not user_id:
+    #     raise TokenError.invalid("Invalid token payload.")
 
     token_repo = RefreshTokenRepository(db)
 

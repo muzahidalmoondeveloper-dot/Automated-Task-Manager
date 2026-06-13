@@ -363,10 +363,10 @@ function ProfileModule({
                 className="flex w-full items-center justify-between rounded-xl border border-red-200 px-3 py-2.5 text-sm font-semibold text-red-600 hover:bg-red-50"
               >
                 <span className="flex items-center gap-2">
-                  <LogoutIcon />
+                  {/* <LogoutIcon /> */}
                   Logout
                 </span>
-                <ChevronRightIcon />
+                {/* <ChevronRightIcon /> */}
               </button>
             </div>
           </div>
@@ -541,9 +541,9 @@ function SidebarContent({
   }
 
   function handleLogout() {
-    setProfileOpen(false);
-    logout();
-    navigate("/login", { replace: true });
+   setProfileOpen(false);
+   console.log('handle-logout',true);
+    navigate("/logout", { replace: true });
   }
 
   function handleClickNav() {
@@ -734,7 +734,7 @@ function SidebarContent({
         </nav>
       </div>
 
-      <div ref={profileRef} className="relative border-t border-slate-100 p-3">
+      <div ref={profileRef} className="relative border-t border-slate-100 p-3 bg-black">
         {profileOpen && !collapsed ? (
           <ProfileModule
             user={user}

@@ -52,6 +52,7 @@ export function AuthProvider({ children }) {
   function loginWithToken(accessToken, authenticatedUser) {
     setAccessToken(accessToken);
     setUser(authenticatedUser);
+    console.log("login-with-token-userData",authenticatedUser);
     setAuthError("");
   }
 
@@ -79,13 +80,15 @@ export function AuthProvider({ children }) {
     setAuthError("");
 
     const data = await authApi.login(payload);
+      console.log("checked-token",data['refresh_token']);
 
     if (data.otp_required || data.email_verification_required) {
       return data;
     }
 
-    if (data.access_token && data.user) {
-      loginWithToken(data.access_token, data.user);
+    if (data.refresh_token && data.user) {
+      console.log("checked",data.refreshToken);
+      loginWithToken(data.refresh_token, data.user);
     }
 
     return data;
@@ -101,9 +104,20 @@ export function AuthProvider({ children }) {
     return data;
   }
 
-  function logout() {
+ async function logout() {
+    const refreshToken = getAccessToken();
+    if(refreshToken == null) {
+      console.log("token-null",refreshToken);
+      return
+    }
+    const payload = {
+      refresh_token: refreshToken,
+      logout_all_devices: true,
+    }
+
+    const data = await authApi.logout(payload);
     removeAccessToken();
-    setUser(null);
+    return data;
   }
 
   const value = useMemo(
