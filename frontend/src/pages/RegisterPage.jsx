@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import toast from "react-hot-toast";
 
 import { authApi } from "../api/authApi";
+import { invitationApi } from "../api/invitationApi";
 import { useAuth } from "../context/AuthContext";
 
 function EyeIcon({ visible }) {
@@ -59,6 +60,8 @@ function validateRegisterForm(data) {
 
 export default function RegisterPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const inviteToken = searchParams.get("invite");
   const { loginWithToken, isAuthenticated, isAuthLoading } = useAuth();
 
   const [step, setStep] = useState("register");
@@ -69,12 +72,31 @@ export default function RegisterPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [resendCooldown, setResendCooldown] = useState(0);
+  const [invitePreview, setInvitePreview] = useState(null);
+
+  // Pre-fill email from invite token and show org context
+  useEffect(() => {
+    if (!inviteToken) return;
+    invitationApi
+      .preview(inviteToken)
+      .then((data) => {
+        setInvitePreview(data);
+        setFormData((current) => ({ ...current, email: data.email }));
+      })
+      .catch(() => {
+        // Ignore — user can still register without pre-fill
+      });
+  }, [inviteToken]);
 
   useEffect(() => {
     if (!isAuthLoading && isAuthenticated) {
-      navigate("/dashboard", { replace: true });
+      if (inviteToken) {
+        navigate(`/accept-invitation?token=${encodeURIComponent(inviteToken)}`, { replace: true });
+      } else {
+        navigate("/dashboard", { replace: true });
+      }
     }
-  }, [isAuthLoading, isAuthenticated, navigate]);
+  }, [isAuthLoading, isAuthenticated, navigate, inviteToken]);
 
   useEffect(() => {
     if (resendCooldown <= 0) return;
@@ -134,7 +156,11 @@ export default function RegisterPage() {
       });
       loginWithToken(response.access_token, response.user);
       toast.success("Account verified successfully.");
-      navigate("/dashboard");
+      if (inviteToken) {
+        navigate(`/accept-invitation?token=${encodeURIComponent(inviteToken)}`);
+      } else {
+        navigate("/dashboard");
+      }
     } catch (err) {
       setOtpError(err.message || "Invalid OTP.");
     } finally {
@@ -156,10 +182,18 @@ export default function RegisterPage() {
           </h1>
           <p className="mt-2 text-sm text-slate-600">
             {step === "register"
-              ? "Create your team member account."
+              ? "Create your account to get started."
               : `Enter the OTP sent to ${formData.email}.`}
           </p>
         </div>
+
+        {invitePreview && step === "register" && (
+          <div className="mb-6 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-800">
+            You were invited to join{" "}
+            <span className="font-semibold">{invitePreview.organization_name}</span> as{" "}
+            <span className="font-semibold capitalize">{invitePreview.role.replace("_", " ")}</span>.
+          </div>
+        )}
 
         {step === "register" ? (
           <form onSubmit={handleRegister} noValidate className="space-y-5">
@@ -188,7 +222,8 @@ export default function RegisterPage() {
                 value={formData.email}
                 onChange={handleChange}
                 placeholder="you@example.com"
-                className={fieldErrors.email ? inputError : inputNormal}
+                readOnly={Boolean(invitePreview)}
+                className={`${fieldErrors.email ? inputError : inputNormal} ${invitePreview ? "bg-slate-50 text-slate-500 cursor-not-allowed" : ""}`}
               />
               <FieldError message={fieldErrors.email} />
             </div>

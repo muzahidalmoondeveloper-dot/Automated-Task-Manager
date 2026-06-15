@@ -17,6 +17,7 @@ import IntegrationsPage from "../pages/IntegrationsPage";
 import ProfilePage from "../pages/ProfilePage";
 import OrganizationPage from "../pages/OrganizationPage";
 import OrganizationSetupPage from "../pages/OrganizationSetupPage";
+import AcceptInvitationPage from "../pages/AcceptInvitationPage";
 
 export default function AppRouter() {
   return (
@@ -28,6 +29,7 @@ export default function AppRouter() {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/accept-invitation" element={<AcceptInvitationPage />} />
 
         {/* Auth required, org NOT required — first-time org setup */}
         <Route path="/setup/organization" element={<OrganizationSetupPage />} />

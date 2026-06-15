@@ -452,6 +452,45 @@ async def accept_invitation(
     )
 
 
+# ── Invitation preview (public) ───────────────────────────────────────────────
+
+@router.get("/invitation-preview")
+async def invitation_preview(
+    token: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Public endpoint — returns invitation details without requiring auth.
+    Used by the accept-invitation page to show org/role context before login."""
+    org_repo = OrganizationRepository(db)
+    invitation = await org_repo.get_invitation_by_token(token)
+
+    if invitation is None:
+        raise AppException(_INVITATION_NOT_FOUND)
+
+    now = datetime.now(timezone.utc)
+    expires_at = invitation.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at < now:
+        raise AppException(_INVITATION_EXPIRED)
+
+    if invitation.accepted_at is not None:
+        raise AppException(_INVITATION_ACCEPTED)
+
+    inviter_name = None
+    if invitation.invited_by:
+        inviter_name = invitation.invited_by.full_name
+
+    return {
+        "email": invitation.email,
+        "role": invitation.role,
+        "organization_name": invitation.organization.name if invitation.organization else None,
+        "organization_id": str(invitation.organization_id),
+        "expires_at": invitation.expires_at.isoformat(),
+        "invited_by_name": inviter_name,
+    }
+
+
 # ── Token management ──────────────────────────────────────────────────────────
 
 @router.post("/token-refresh", response_model=TokenResponse)

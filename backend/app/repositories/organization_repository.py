@@ -184,8 +184,22 @@ class OrganizationRepository:
     async def get_invitation_by_token(self, token: str) -> OrganizationInvitation | None:
         result = await self.db.execute(
             select(OrganizationInvitation)
-            .options(selectinload(OrganizationInvitation.organization))
+            .options(
+                selectinload(OrganizationInvitation.organization),
+                selectinload(OrganizationInvitation.invited_by),
+            )
             .where(OrganizationInvitation.token == token)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_invitation_by_id(
+        self, org_id: uuid.UUID, invitation_id: uuid.UUID
+    ) -> OrganizationInvitation | None:
+        result = await self.db.execute(
+            select(OrganizationInvitation).where(
+                OrganizationInvitation.id == invitation_id,
+                OrganizationInvitation.organization_id == org_id,
+            )
         )
         return result.scalar_one_or_none()
 

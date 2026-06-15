@@ -3,6 +3,7 @@ import toast from "react-hot-toast";
 
 import { userApi } from "../api/userApi";
 import { teamApi } from "../api/teamApi";
+import { invitationApi } from "../api/invitationApi";
 import { useAuth } from "../context/AuthContext";
 
 const ROLE_OPTIONS = [
@@ -14,21 +15,20 @@ const ROLE_OPTIONS = [
 
 const ASSIGNABLE_ROLES = ROLE_OPTIONS.filter((r) => r.value !== "owner");
 
-const initialForm = {
-  full_name: "",
-  email: "",
-  password: "",
-  role: "team_member",
-  managed_team_id: "",
-};
-
 function formatRole(role) {
   return ROLE_OPTIONS.find((item) => item.value === role)?.label || role;
 }
 
-function getUserInitials(user) {
-  const name = user?.full_name || user?.email || "User";
+function formatDate(dateString) {
+  return new Date(dateString).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
 
+function getUserInitials(targetUser) {
+  const name = targetUser?.full_name || targetUser?.email || "User";
   return name
     .split(" ")
     .map((part) => part.charAt(0))
@@ -40,42 +40,15 @@ function getUserInitials(user) {
 function EyeIcon({ hidden }) {
   if (hidden) {
     return (
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        className="h-5 w-5"
-        fill="none"
-        viewBox="0 0 24 24"
-        stroke="currentColor"
-        strokeWidth="1.8"
-      >
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          d="M3 3l18 18M10.58 10.58A2 2 0 0012 14a2 2 0 001.42-.58M9.88 5.09A10.45 10.45 0 0112 4.88c5.25 0 8.5 4.62 9.5 7.12a12.17 12.17 0 01-2.3 3.48M6.53 6.53A12.32 12.32 0 002.5 12c1 2.5 4.25 7.12 9.5 7.12a10.7 10.7 0 005.47-1.55"
-        />
+      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M3 3l18 18M10.58 10.58A2 2 0 0012 14a2 2 0 001.42-.58M9.88 5.09A10.45 10.45 0 0112 4.88c5.25 0 8.5 4.62 9.5 7.12a12.17 12.17 0 01-2.3 3.48M6.53 6.53A12.32 12.32 0 002.5 12c1 2.5 4.25 7.12 9.5 7.12a10.7 10.7 0 005.47-1.55" />
       </svg>
     );
   }
-
   return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      className="h-5 w-5"
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-      strokeWidth="1.8"
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M2.5 12S5.75 4.88 12 4.88 21.5 12 21.5 12 18.25 19.12 12 19.12 2.5 12 2.5 12z"
-      />
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M12 14.75A2.75 2.75 0 1012 9.25a2.75 2.75 0 000 5.5z"
-      />
+    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M2.5 12S5.75 4.88 12 4.88 21.5 12 21.5 12 18.25 19.12 12 19.12 2.5 12 2.5 12z" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 14.75A2.75 2.75 0 1012 9.25a2.75 2.75 0 000 5.5z" />
     </svg>
   );
 }
@@ -91,71 +64,64 @@ function ThreeDotsIcon() {
 export default function UsersPage() {
   const { user } = useAuth();
 
+  // Users & teams
   const [users, setUsers] = useState([]);
   const [teams, setTeams] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState("");
 
-  const [formData, setFormData] = useState(initialForm);
-  const [editingUserId, setEditingUserId] = useState(null);
-
-  const [isUserModalOpen, setIsUserModalOpen] = useState(false);
-  const [openActionMenuId, setOpenActionMenuId] = useState(null);
-  const [showPassword, setShowPassword] = useState(false);
-
+  // Filter state
   const [searchQuery, setSearchQuery] = useState("");
   const [roleFilter, setRoleFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
 
-  const [isLoading, setIsLoading] = useState(true);
+  // Action menu
+  const [openActionMenuId, setOpenActionMenuId] = useState(null);
+
+  // Tabs
+  const [activeTab, setActiveTab] = useState("members");
+
+  // Edit modal
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [editingUserId, setEditingUserId] = useState(null);
+  const [editForm, setEditForm] = useState({ full_name: "", email: "", password: "", role: "team_member" });
+  const [editError, setEditError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
-  const [error, setError] = useState("");
+  // Invite modal
+  const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
+  const [inviteForm, setInviteForm] = useState({ email: "", role: "team_member" });
+  const [inviteError, setInviteError] = useState("");
+  const [isInviting, setIsInviting] = useState(false);
 
-  const isEditing = editingUserId !== null;
+  // Pending invitations
+  const [invitations, setInvitations] = useState([]);
+
   const isAdmin = user?.role === "owner" || user?.role === "admin";
-  const isTeamManager = user?.role === "team_manager";
-  const canCreateAdmin = user?.role === "owner" || user?.role === "admin";
-
-  const managedTeams = useMemo(
-    () => teams.filter((t) => t.team_manager_id === user?.id),
-    [teams, user]
-  );
 
   const availableRoles = useMemo(() => {
-    return ASSIGNABLE_ROLES.filter((role) => {
-      if (canCreateAdmin) return true;
-      return role.value === "team_member";
-    });
-  }, [canCreateAdmin]);
-
+    const canAssignAdmin = user?.role === "owner" || user?.role === "admin";
+    return ASSIGNABLE_ROLES.filter((r) => canAssignAdmin || r.value === "team_member");
+  }, [user?.role]);
 
   function getTeamsForUser(targetUser) {
     if (!targetUser) return [];
-
     if (targetUser.role === "team_manager") {
       return teams.filter((team) => team.team_manager_id === targetUser.id);
     }
-
     if (targetUser.role === "team_member") {
       return teams.filter((team) =>
         team.members?.some((member) => member.id === targetUser.id)
       );
     }
-
     return [];
-  }
-
-  function getPrimaryTeamForUser(targetUser) {
-    return getTeamsForUser(targetUser)[0] || null;
   }
 
   const filteredUsers = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
-
     return users.filter((item) => {
-      const userTeamNames = getTeamsForUser(item)
-        .map((team) => team.name)
-        .join(" ");
-
+      const userTeamNames = getTeamsForUser(item).map((t) => t.name).join(" ");
       const searchableText = [
         item.full_name,
         item.email,
@@ -168,46 +134,27 @@ export default function UsersPage() {
         .join(" ")
         .toLowerCase();
 
-      const matchesSearch = !query || searchableText.includes(query);
-
-      const matchesRole = roleFilter === "all" || item.role === roleFilter;
-
-      const matchesStatus =
-        statusFilter === "all" ||
-        (statusFilter === "active" && item.is_active) ||
-        (statusFilter === "inactive" && !item.is_active) ||
-        (statusFilter === "verified" && item.email_verified_at) ||
-        (statusFilter === "unverified" && !item.email_verified_at);
-
-      return matchesSearch && matchesRole && matchesStatus;
+      return (
+        (!query || searchableText.includes(query)) &&
+        (roleFilter === "all" || item.role === roleFilter) &&
+        (statusFilter === "all" ||
+          (statusFilter === "active" && item.is_active) ||
+          (statusFilter === "inactive" && !item.is_active) ||
+          (statusFilter === "verified" && item.email_verified_at) ||
+          (statusFilter === "unverified" && !item.email_verified_at))
+      );
     });
   }, [users, teams, searchQuery, roleFilter, statusFilter]);
 
-  const hasActiveFilters =
-    searchQuery || roleFilter !== "all" || statusFilter !== "all";
+  const hasActiveFilters = searchQuery || roleFilter !== "all" || statusFilter !== "all";
 
   async function loadUsers() {
     try {
       setIsLoading(true);
       setError("");
-
-      if (isAdmin) {
-        const [userData, teamData] = await Promise.all([
-          userApi.list(),
-          teamApi.list(),
-        ]);
-
-        setUsers(userData);
-        setTeams(teamData);
-      } else {
-        const [userData, teamData] = await Promise.all([
-          userApi.list(),
-          teamApi.list(),
-        ]);
-
-        setUsers(userData);
-        setTeams(teamData);
-      }
+      const [userData, teamData] = await Promise.all([userApi.list(), teamApi.list()]);
+      setUsers(userData);
+      setTeams(teamData);
     } catch (err) {
       setError(err.message || "Unable to load users.");
       toast.error(err.message || "Unable to load users.");
@@ -216,116 +163,72 @@ export default function UsersPage() {
     }
   }
 
+  async function loadInvitations() {
+    if (!isAdmin) return;
+    try {
+      const data = await invitationApi.listPending();
+      setInvitations(data);
+    } catch {
+      // silently fail
+    }
+  }
+
   useEffect(() => {
     loadUsers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin]);
 
-  function handleChange(event) {
-    const { name, value } = event.target;
-  
-    setFormData((current) => ({
-      ...current,
-      [name]: value,
-    }));
-  }
+  useEffect(() => {
+    if (isAdmin) loadInvitations();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin]);
 
-  function resetForm() {
-    setFormData(initialForm);
-    setEditingUserId(null);
-    setShowPassword(false);
-    setError("");
-  }
-
-  function resetFilters() {
-    setSearchQuery("");
-    setRoleFilter("all");
-    setStatusFilter("all");
-    setOpenActionMenuId(null);
-  }
-
-  function openCreateModal() {
-    resetForm();
-    setOpenActionMenuId(null);
-    setIsUserModalOpen(true);
-  }
-
-  function closeUserModal() {
-    resetForm();
-    setIsUserModalOpen(false);
-  }
+  // ── Edit handlers ──────────────────────────────────────────────────────────
 
   function handleEdit(targetUser) {
     setOpenActionMenuId(null);
     setEditingUserId(targetUser.id);
-  
-    setFormData({
+    setEditForm({
       full_name: targetUser.full_name || "",
       email: targetUser.email || "",
       password: "",
       role: targetUser.role || "team_member",
     });
-  
-    setError("");
-    setIsUserModalOpen(true);
+    setEditError("");
+    setShowPassword(false);
+    setIsEditModalOpen(true);
   }
 
-  function toggleActionMenu(userId) {
-    setOpenActionMenuId((current) => (current === userId ? null : userId));
+  function closeEditModal() {
+    setIsEditModalOpen(false);
+    setEditingUserId(null);
+    setEditForm({ full_name: "", email: "", password: "", role: "team_member" });
+    setEditError("");
+    setShowPassword(false);
   }
 
-  async function handleSubmit(event) {
+  async function handleEditSubmit(event) {
     event.preventDefault();
-
-
     try {
       setIsSubmitting(true);
-      setError("");
-
-      if (isEditing) {
-        const payload = {
-          full_name: formData.full_name,
-          email: formData.email,
-          role: formData.role,
-        };
-
-        if (formData.password.trim()) {
-          payload.password = formData.password;
-        }
-
-        const updatedUser = await userApi.update(editingUserId, payload);
-
-        setUsers((current) =>
-          current.map((item) => (item.id === editingUserId ? updatedUser : item))
-        );
-
-        toast.success("User updated successfully.");
-      } else {
-        const createPayload = {
-          full_name: formData.full_name,
-          email: formData.email,
-          password: formData.password,
-          role: formData.role,
-        };
-
-        if (isTeamManager && managedTeams.length > 1 && formData.managed_team_id) {
-          createPayload.managed_team_id = Number(formData.managed_team_id);
-        }
-
-        const createdUser = await userApi.create(createPayload);
-
-        setUsers((current) => [createdUser, ...current]);
-
-        toast.success("User created successfully.");
+      setEditError("");
+      const payload = {
+        full_name: editForm.full_name,
+        email: editForm.email,
+        role: editForm.role,
+      };
+      if (editForm.password.trim()) {
+        payload.password = editForm.password;
       }
-
+      const updatedUser = await userApi.update(editingUserId, payload);
+      setUsers((current) =>
+        current.map((item) => (item.id === editingUserId ? updatedUser : item))
+      );
+      toast.success("User updated successfully.");
       window.dispatchEvent(new Event("teams-changed"));
-
-      await loadUsers();
-
-      closeUserModal();
+      closeEditModal();
     } catch (err) {
-      setError(err.message || "Unable to save user.");
-      toast.error(err.message || "Unable to save user.");
+      setEditError(err.message || "Unable to save user.");
     } finally {
       setIsSubmitting(false);
     }
@@ -333,512 +236,562 @@ export default function UsersPage() {
 
   async function handleDelete(targetUser) {
     setOpenActionMenuId(null);
-
-    const confirmed = window.confirm(`Delete ${targetUser.full_name}?`);
-
-    if (!confirmed) return;
-
+    if (!window.confirm(`Delete ${targetUser.full_name}?`)) return;
     try {
-      setError("");
-
       await userApi.delete(targetUser.id);
-
-      setUsers((current) =>
-        current.filter((item) => item.id !== targetUser.id)
-      );
-
-      if (editingUserId === targetUser.id) {
-        closeUserModal();
-      }
-
+      setUsers((current) => current.filter((item) => item.id !== targetUser.id));
       window.dispatchEvent(new Event("teams-changed"));
-
       toast.success(`${targetUser.full_name} deleted successfully.`);
     } catch (err) {
       toast.error(err.message || "Unable to delete user.");
     }
   }
 
+  // ── Invite handlers ────────────────────────────────────────────────────────
+
+  function openInviteModal() {
+    setInviteForm({ email: "", role: "team_member" });
+    setInviteError("");
+    setIsInviteModalOpen(true);
+  }
+
+  function closeInviteModal() {
+    setIsInviteModalOpen(false);
+    setInviteForm({ email: "", role: "team_member" });
+    setInviteError("");
+  }
+
+  async function handleInvite(event) {
+    event.preventDefault();
+    if (!inviteForm.email.trim()) {
+      setInviteError("Email is required.");
+      return;
+    }
+    try {
+      setIsInviting(true);
+      setInviteError("");
+      await invitationApi.invite(inviteForm);
+      toast.success(`Invitation sent to ${inviteForm.email}`);
+      closeInviteModal();
+      await loadInvitations();
+    } catch (err) {
+      setInviteError(err.message || "Failed to send invitation.");
+    } finally {
+      setIsInviting(false);
+    }
+  }
+
+  async function handleRevoke(invitation) {
+    if (!window.confirm(`Revoke invitation for ${invitation.email}?`)) return;
+    try {
+      await invitationApi.revoke(invitation.id);
+      setInvitations((current) => current.filter((i) => i.id !== invitation.id));
+      toast.success("Invitation revoked.");
+    } catch (err) {
+      toast.error(err.message || "Failed to revoke invitation.");
+    }
+  }
+
+  async function handleResend(invitation) {
+    try {
+      await invitationApi.resend(invitation.id);
+      toast.success(`Invitation resent to ${invitation.email}`);
+      await loadInvitations();
+    } catch (err) {
+      toast.error(err.message || "Failed to resend invitation.");
+    }
+  }
+
   return (
     <div className="w-full">
+      {/* Page header */}
       <div className="mb-6 flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
         <div>
           <h1 className="text-3xl font-bold text-slate-900">Users</h1>
           <p className="mt-2 text-sm text-slate-600">
-            Create, update, and manage Admins, Team Managers, and Team Members.
+            Manage team members and pending invitations.
           </p>
         </div>
-
-        <button
-          type="button"
-          onClick={openCreateModal}
-          className="w-fit rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800"
-        >
-          + Add User
-        </button>
+        {isAdmin && (
+          <button
+            type="button"
+            onClick={openInviteModal}
+            className="w-fit rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800"
+          >
+            + Invite Member
+          </button>
+        )}
       </div>
 
+      {/* Tabs */}
       <div className="mb-6 border-b border-slate-200">
         <nav className="flex gap-6">
           <button
             type="button"
-            className="border-b-2 border-slate-900 pb-3 text-sm font-semibold text-slate-900"
+            onClick={() => setActiveTab("members")}
+            className={`border-b-2 pb-3 text-sm font-semibold transition-colors ${
+              activeTab === "members"
+                ? "border-slate-900 text-slate-900"
+                : "border-transparent text-slate-500 hover:text-slate-700"
+            }`}
           >
-            List
+            Members
           </button>
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => { setActiveTab("invitations"); loadInvitations(); }}
+              className={`border-b-2 pb-3 text-sm font-semibold transition-colors ${
+                activeTab === "invitations"
+                  ? "border-slate-900 text-slate-900"
+                  : "border-transparent text-slate-500 hover:text-slate-700"
+              }`}
+            >
+              Pending Invitations
+              {invitations.length > 0 && (
+                <span className="ml-2 rounded-full bg-slate-200 px-2 py-0.5 text-xs text-slate-700">
+                  {invitations.length}
+                </span>
+              )}
+            </button>
+          )}
         </nav>
       </div>
 
-      <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="grid gap-4 lg:grid-cols-[1.5fr_1fr_1fr_auto]">
-          <div>
-            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
-              Search
-            </label>
-
-            <input
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder="Search by name, email, role, team..."
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 outline-none focus:border-slate-900"
-            />
+      {/* ── Members tab ───────────────────────────────────────────────────────── */}
+      {activeTab === "members" && (
+        <>
+          {/* Filters */}
+          <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="grid gap-4 lg:grid-cols-[1.5fr_1fr_1fr_auto]">
+              <div>
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Search
+                </label>
+                <input
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search by name, email, role, team..."
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 outline-none focus:border-slate-900"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Role
+                </label>
+                <select
+                  value={roleFilter}
+                  onChange={(e) => setRoleFilter(e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 outline-none focus:border-slate-900"
+                >
+                  <option value="all">All roles</option>
+                  {ROLE_OPTIONS.map((r) => (
+                    <option key={r.value} value={r.value}>{r.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Status
+                </label>
+                <select
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 outline-none focus:border-slate-900"
+                >
+                  <option value="all">All statuses</option>
+                  <option value="active">Active</option>
+                  <option value="inactive">Inactive</option>
+                  <option value="verified">Verified</option>
+                  <option value="unverified">Unverified</option>
+                </select>
+              </div>
+              <div className="flex items-end">
+                <button
+                  type="button"
+                  onClick={() => { setSearchQuery(""); setRoleFilter("all"); setStatusFilter("all"); setOpenActionMenuId(null); }}
+                  disabled={!hasActiveFilters}
+                  className="w-full rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 lg:w-auto"
+                >
+                  Reset
+                </button>
+              </div>
+            </div>
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4">
+              <p className="text-sm text-slate-500">
+                Showing{" "}
+                <span className="font-semibold text-slate-900">{filteredUsers.length}</span>{" "}
+                of{" "}
+                <span className="font-semibold text-slate-900">{users.length}</span> members
+              </p>
+              {hasActiveFilters && (
+                <p className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+                  Filters active
+                </p>
+              )}
+            </div>
           </div>
 
-          <div>
-            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
-              Role
-            </label>
+          {error && (
+            <div className="mb-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {error}
+            </div>
+          )}
 
-            <select
-              value={roleFilter}
-              onChange={(event) => setRoleFilter(event.target.value)}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 outline-none focus:border-slate-900"
-            >
-              <option value="all">All roles</option>
-
-              {ROLE_OPTIONS.map((role) => (
-                <option key={role.value} value={role.value}>
-                  {role.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
-              Status
-            </label>
-
-            <select
-              value={statusFilter}
-              onChange={(event) => setStatusFilter(event.target.value)}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 outline-none focus:border-slate-900"
-            >
-              <option value="all">All statuses</option>
-              <option value="active">Active</option>
-              <option value="inactive">Inactive</option>
-              <option value="verified">Verified</option>
-              <option value="unverified">Unverified</option>
-            </select>
-          </div>
-
-          <div className="flex items-end">
-            <button
-              type="button"
-              onClick={resetFilters}
-              disabled={!hasActiveFilters}
-              className="w-full rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 lg:w-auto"
-            >
-              Reset
-            </button>
-          </div>
-        </div>
-
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4">
-          <p className="text-sm text-slate-500">
-            Showing{" "}
-            <span className="font-semibold text-slate-900">
-              {filteredUsers.length}
-            </span>{" "}
-            of{" "}
-            <span className="font-semibold text-slate-900">{users.length}</span>{" "}
-            users
-          </p>
-
-          {hasActiveFilters ? (
-            <p className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
-              Filters active
-            </p>
-          ) : null}
-        </div>
-      </div>
-
-      {error ? (
-        <div className="mb-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {error}
-        </div>
-      ) : null}
-
-      {isLoading ? (
-        <div className="rounded-2xl bg-white p-6 text-sm text-slate-500 shadow-sm">
-          Loading users...
-        </div>
-      ) : null}
-
-      {!isLoading ? (
-        <section className="overflow-visible rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="overflow-x-auto xl:overflow-visible">
-            <table className="w-full min-w-[1100px] text-sm xl:min-w-0">
-              <thead className="bg-slate-50">
-                <tr className="border-b border-slate-200">
-                  <th className="min-w-72 px-4 py-3 text-left font-semibold text-slate-700">
-                    User
-                  </th>
-
-                  <th className="min-w-56 px-4 py-3 text-left font-semibold text-slate-700">
-                    Email
-                  </th>
-
-                  <th className="min-w-40 px-4 py-3 text-left font-semibold text-slate-700">
-                    Role
-                  </th>
-
-                  <th className="min-w-44 px-4 py-3 text-left font-semibold text-slate-700">
-                    Team
-                  </th>
-
-                  <th className="min-w-32 px-4 py-3 text-left font-semibold text-slate-700">
-                    Account
-                  </th>
-
-                  <th className="min-w-32 px-4 py-3 text-left font-semibold text-slate-700">
-                    Verification
-                  </th>
-
-                  {isAdmin ? (
-                    <th className="w-16 px-4 py-3 text-right font-semibold text-slate-700">
-                      Actions
-                    </th>
-                  ) : null}
-                </tr>
-              </thead>
-
-              <tbody className="divide-y divide-slate-200">
-                {filteredUsers.length ? (
-                  filteredUsers.map((item) => {
-                    const userTeams = getTeamsForUser(item);
-
-                    return (
-                      <tr key={item.id} className="hover:bg-slate-50/70">
-                        <td className="px-4 py-4 align-middle">
-                          <div className="flex items-center gap-3">
-                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-500 text-sm font-bold text-white">
-                              {getUserInitials(item)}
-                            </div>
-
-                            <div className="min-w-0">
-                              <p className="truncate font-semibold text-slate-900">
-                                {item.full_name}
-                              </p>
-
-                              {user?.id === item.id ? (
-                                <p className="mt-1 text-xs font-medium text-slate-400">
-                                  You
-                                </p>
-                              ) : null}
-                            </div>
-                          </div>
-                        </td>
-
-                        <td className="px-4 py-4 align-middle text-slate-700">
-                          {item.email}
-                        </td>
-
-                        <td className="px-4 py-4 align-middle">
-                          <span className="inline-flex rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold capitalize text-slate-700">
-                            {formatRole(item.role)}
-                          </span>
-                        </td>
-
-                        <td className="px-4 py-4 align-middle text-slate-700">
-                          {userTeams.length ? (
-                            <div className="flex flex-wrap gap-2">
-                              {userTeams.map((teamItem) => (
-                                <span
-                                  key={teamItem.id}
-                                  className={
-                                    item.role === "team_manager"
-                                      ? "inline-flex rounded-full bg-indigo-100 px-3 py-1 text-xs font-semibold text-indigo-700"
-                                      : "inline-flex rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700"
-                                  }
-                                >
-                                  {teamItem.name}
-                                </span>
-                              ))}
-                            </div>
-                          ) : item.role === "team_manager" ? (
-                            <span className="text-amber-600">
-                              No team assigned
-                            </span>
-                          ) : (
-                            <span className="text-slate-400">—</span>
-                          )}
-                        </td>
-
-                        <td className="px-4 py-4 align-middle">
-                          {item.is_active ? (
-                            <span className="inline-flex rounded-full bg-green-100 px-3 py-1 text-xs font-semibold text-green-700">
-                              Active
-                            </span>
-                          ) : (
-                            <span className="inline-flex rounded-full bg-red-100 px-3 py-1 text-xs font-semibold text-red-700">
-                              Inactive
-                            </span>
-                          )}
-                        </td>
-
-                        <td className="px-4 py-4 align-middle">
-                          {item.email_verified_at ? (
-                            <span className="inline-flex rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-700">
-                              Verified
-                            </span>
-                          ) : (
-                            <span className="inline-flex rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-700">
-                              Unverified
-                            </span>
-                          )}
-                        </td>
-
-                        {isAdmin ? (
-                          <td className="relative px-4 py-4 text-right align-middle">
-                            <button
-                              type="button"
-                              onClick={() => toggleActionMenu(item.id)}
-                              className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900"
-                              title="User actions"
-                            >
-                              <ThreeDotsIcon />
-                            </button>
-
-                            {openActionMenuId === item.id ? (
-                              <div className="absolute right-4 top-12 z-20 w-36 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
+          {isLoading ? (
+            <div className="rounded-2xl bg-white p-6 text-sm text-slate-500 shadow-sm">
+              Loading users...
+            </div>
+          ) : (
+            <section className="overflow-visible rounded-2xl border border-slate-200 bg-white shadow-sm">
+              <div className="overflow-x-auto xl:overflow-visible">
+                <table className="w-full min-w-[1100px] text-sm xl:min-w-0">
+                  <thead className="bg-slate-50">
+                    <tr className="border-b border-slate-200">
+                      <th className="min-w-72 px-4 py-3 text-left font-semibold text-slate-700">User</th>
+                      <th className="min-w-56 px-4 py-3 text-left font-semibold text-slate-700">Email</th>
+                      <th className="min-w-40 px-4 py-3 text-left font-semibold text-slate-700">Role</th>
+                      <th className="min-w-44 px-4 py-3 text-left font-semibold text-slate-700">Team</th>
+                      <th className="min-w-32 px-4 py-3 text-left font-semibold text-slate-700">Account</th>
+                      <th className="min-w-32 px-4 py-3 text-left font-semibold text-slate-700">Verification</th>
+                      {isAdmin && (
+                        <th className="w-16 px-4 py-3 text-right font-semibold text-slate-700">Actions</th>
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200">
+                    {filteredUsers.length ? (
+                      filteredUsers.map((item) => {
+                        const userTeams = getTeamsForUser(item);
+                        return (
+                          <tr key={item.id} className="hover:bg-slate-50/70">
+                            <td className="px-4 py-4 align-middle">
+                              <div className="flex items-center gap-3">
+                                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-500 text-sm font-bold text-white">
+                                  {getUserInitials(item)}
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="truncate font-semibold text-slate-900">{item.full_name}</p>
+                                  {user?.id === item.id && (
+                                    <p className="mt-1 text-xs font-medium text-slate-400">You</p>
+                                  )}
+                                </div>
+                              </div>
+                            </td>
+                            <td className="px-4 py-4 align-middle text-slate-700">{item.email}</td>
+                            <td className="px-4 py-4 align-middle">
+                              <span className="inline-flex rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold capitalize text-slate-700">
+                                {formatRole(item.role)}
+                              </span>
+                            </td>
+                            <td className="px-4 py-4 align-middle text-slate-700">
+                              {userTeams.length ? (
+                                <div className="flex flex-wrap gap-2">
+                                  {userTeams.map((teamItem) => (
+                                    <span
+                                      key={teamItem.id}
+                                      className={
+                                        item.role === "team_manager"
+                                          ? "inline-flex rounded-full bg-indigo-100 px-3 py-1 text-xs font-semibold text-indigo-700"
+                                          : "inline-flex rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700"
+                                      }
+                                    >
+                                      {teamItem.name}
+                                    </span>
+                                  ))}
+                                </div>
+                              ) : item.role === "team_manager" ? (
+                                <span className="text-amber-600">No team assigned</span>
+                              ) : (
+                                <span className="text-slate-400">—</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-4 align-middle">
+                              {item.is_active ? (
+                                <span className="inline-flex rounded-full bg-green-100 px-3 py-1 text-xs font-semibold text-green-700">Active</span>
+                              ) : (
+                                <span className="inline-flex rounded-full bg-red-100 px-3 py-1 text-xs font-semibold text-red-700">Inactive</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-4 align-middle">
+                              {item.email_verified_at ? (
+                                <span className="inline-flex rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-700">Verified</span>
+                              ) : (
+                                <span className="inline-flex rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-700">Unverified</span>
+                              )}
+                            </td>
+                            {isAdmin && (
+                              <td className="relative px-4 py-4 text-right align-middle">
                                 <button
                                   type="button"
-                                  onClick={() => {
-                                    setOpenActionMenuId(null);
-                                    handleEdit(item);
-                                  }}
-                                  className="block w-full px-4 py-2.5 text-left text-sm font-medium text-slate-700 hover:bg-slate-50"
+                                  onClick={() => setOpenActionMenuId((current) => current === item.id ? null : item.id)}
+                                  className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900"
                                 >
-                                  Edit
+                                  <ThreeDotsIcon />
                                 </button>
-
-                                {user?.id !== item.id ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setOpenActionMenuId(null);
-                                      handleDelete(item);
-                                    }}
-                                    className="block w-full px-4 py-2.5 text-left text-sm font-medium text-red-600 hover:bg-red-50"
-                                  >
-                                    Delete
-                                  </button>
-                                ) : null}
-                              </div>
-                            ) : null}
-                          </td>
-                        ) : null}
+                                {openActionMenuId === item.id && (
+                                  <div className="absolute right-4 top-12 z-20 w-36 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleEdit(item)}
+                                      className="block w-full px-4 py-2.5 text-left text-sm font-medium text-slate-700 hover:bg-slate-50"
+                                    >
+                                      Edit
+                                    </button>
+                                    {user?.id !== item.id && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDelete(item)}
+                                        className="block w-full px-4 py-2.5 text-left text-sm font-medium text-red-600 hover:bg-red-50"
+                                      >
+                                        Delete
+                                      </button>
+                                    )}
+                                  </div>
+                                )}
+                              </td>
+                            )}
+                          </tr>
+                        );
+                      })
+                    ) : (
+                      <tr>
+                        <td colSpan={isAdmin ? 7 : 6} className="px-4 py-8 text-center text-sm text-slate-500">
+                          {hasActiveFilters ? "No users match your filters." : "No users found."}
+                        </td>
                       </tr>
-                    );
-                  })
-                ) : (
-                  <tr>
-                    <td
-                      colSpan={isAdmin ? 7 : 6}
-                      className="px-4 py-8 text-center text-sm text-slate-500"
-                    >
-                      {hasActiveFilters
-                        ? "No users match your filters."
-                        : "No users found."}
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      ) : null}
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+        </>
+      )}
 
-      {isUserModalOpen ? (
+      {/* ── Pending Invitations tab ───────────────────────────────────────────── */}
+      {activeTab === "invitations" && isAdmin && (
+        <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+          {invitations.length === 0 ? (
+            <div className="px-4 py-12 text-center text-sm text-slate-500">
+              No pending invitations.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50">
+                  <tr className="border-b border-slate-200">
+                    <th className="px-4 py-3 text-left font-semibold text-slate-700">Email</th>
+                    <th className="px-4 py-3 text-left font-semibold text-slate-700">Role</th>
+                    <th className="px-4 py-3 text-left font-semibold text-slate-700">Expires</th>
+                    <th className="px-4 py-3 text-right font-semibold text-slate-700">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200">
+                  {invitations.map((invitation) => (
+                    <tr key={invitation.id} className="hover:bg-slate-50/70">
+                      <td className="px-4 py-4 align-middle text-slate-900">{invitation.email}</td>
+                      <td className="px-4 py-4 align-middle">
+                        <span className="inline-flex rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+                          {formatRole(invitation.role)}
+                        </span>
+                      </td>
+                      <td className="px-4 py-4 align-middle text-slate-600">
+                        {formatDate(invitation.expires_at)}
+                      </td>
+                      <td className="px-4 py-4 text-right align-middle">
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleResend(invitation)}
+                            className="rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-700 border border-slate-300 hover:bg-slate-50"
+                          >
+                            Resend
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleRevoke(invitation)}
+                            className="rounded-lg px-3 py-1.5 text-xs font-semibold text-red-600 border border-red-200 hover:bg-red-50"
+                          >
+                            Revoke
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* ── Edit modal ─────────────────────────────────────────────────────────── */}
+      {isEditModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 px-4 py-6">
           <div className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl bg-white p-6 shadow-xl">
             <div className="mb-6 flex items-center justify-between">
               <div>
-                <h2 className="text-xl font-semibold text-slate-900">
-                  {isEditing ? "Edit User" : "Create User"}
-                </h2>
-
-                <p className="mt-1 text-sm text-slate-500">
-                  {isEditing
-                    ? "Leave password empty if you do not want to change it."
-                    : isTeamManager
-                    ? "New member will be added to your team."
-                    : "Select a role. Team Manager can be assigned later from the Teams page."}
-                </p>
+                <h2 className="text-xl font-semibold text-slate-900">Edit User</h2>
+                <p className="mt-1 text-sm text-slate-500">Leave password empty to keep the current one.</p>
               </div>
-
               <button
                 type="button"
-                onClick={closeUserModal}
+                onClick={closeEditModal}
                 className="rounded-lg px-3 py-2 text-sm font-semibold text-slate-500 hover:bg-slate-100 hover:text-slate-900"
               >
                 ✕
               </button>
             </div>
 
-            {error ? (
+            {editError && (
               <div className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                {error}
+                {editError}
               </div>
-            ) : null}
+            )}
 
-            <form onSubmit={handleSubmit} className="space-y-5">
+            <form onSubmit={handleEditSubmit} className="space-y-5">
               <div>
-                <label className="mb-1 block text-sm font-medium text-slate-700">
-                  Full name
-                </label>
-
+                <label className="mb-1 block text-sm font-medium text-slate-700">Full name</label>
                 <input
-                  name="full_name"
-                  value={formData.full_name}
-                  onChange={handleChange}
+                  value={editForm.full_name}
+                  onChange={(e) => setEditForm((current) => ({ ...current, full_name: e.target.value }))}
                   required
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                 />
               </div>
-
               <div>
-                <label className="mb-1 block text-sm font-medium text-slate-700">
-                  Email
-                </label>
-
+                <label className="mb-1 block text-sm font-medium text-slate-700">Email</label>
                 <input
-                  name="email"
                   type="email"
-                  value={formData.email}
-                  onChange={handleChange}
+                  value={editForm.email}
+                  onChange={(e) => setEditForm((current) => ({ ...current, email: e.target.value }))}
                   required
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                 />
               </div>
-
               <div>
-                <label className="mb-1 block text-sm font-medium text-slate-700">
-                  Password
-                </label>
-
+                <label className="mb-1 block text-sm font-medium text-slate-700">Password</label>
                 <div className="relative">
                   <input
-                    name="password"
                     type={showPassword ? "text" : "password"}
-                    minLength={isEditing ? undefined : 8}
-                    value={formData.password}
-                    onChange={handleChange}
-                    required={!isEditing}
+                    value={editForm.password}
+                    onChange={(e) => setEditForm((current) => ({ ...current, password: e.target.value }))}
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 pr-11 text-sm"
                   />
-
                   <button
                     type="button"
-                    onClick={() => setShowPassword((current) => !current)}
+                    onClick={() => setShowPassword((v) => !v)}
                     className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-slate-500 hover:text-slate-900"
-                    aria-label={
-                      showPassword ? "Hide password" : "Show password"
-                    }
                   >
                     <EyeIcon hidden={showPassword} />
                   </button>
                 </div>
-
-                {isEditing ? (
-                  <p className="mt-1 text-xs text-slate-400">
-                    Leave empty to keep the current password.
-                  </p>
-                ) : null}
+                <p className="mt-1 text-xs text-slate-400">Leave empty to keep the current password.</p>
               </div>
-
               <div>
-                <label className="mb-1 block text-sm font-medium text-slate-700">
-                  Role
-                </label>
-
+                <label className="mb-1 block text-sm font-medium text-slate-700">Role</label>
                 <select
-                  name="role"
-                  value={formData.role}
-                  onChange={handleChange}
+                  value={editForm.role}
+                  onChange={(e) => setEditForm((current) => ({ ...current, role: e.target.value }))}
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                 >
-                  {availableRoles.map((role) => (
-                    <option key={role.value} value={role.value}>
-                      {role.label}
-                    </option>
+                  {availableRoles.map((r) => (
+                    <option key={r.value} value={r.value}>{r.label}</option>
                   ))}
                 </select>
               </div>
-
-              {!isEditing && isTeamManager && managedTeams.length > 1 && (
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-slate-700">
-                    Team <span className="text-red-500">*</span>
-                  </label>
-
-                  <select
-                    name="managed_team_id"
-                    value={formData.managed_team_id}
-                    onChange={handleChange}
-                    required
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  >
-                    <option value="">Select a team...</option>
-                    {managedTeams.map((team) => (
-                      <option key={team.id} value={team.id}>
-                        {team.name}
-                      </option>
-                    ))}
-                  </select>
-
-                  <p className="mt-1 text-xs text-slate-400">
-                    Choose which of your teams to add this member to.
-                  </p>
-                </div>
-              )}
-
               <div className="flex gap-3 pt-2">
                 <button
                   type="button"
-                  onClick={closeUserModal}
+                  onClick={closeEditModal}
                   className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
                 >
                   Cancel
                 </button>
-
                 <button
                   type="submit"
                   disabled={isSubmitting}
                   className="w-full rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {isSubmitting
-                    ? "Saving..."
-                    : isEditing
-                    ? "Update User"
-                    : "Create User"}
+                  {isSubmitting ? "Saving..." : "Update User"}
                 </button>
               </div>
             </form>
           </div>
         </div>
-      ) : null}
+      )}
+
+      {/* ── Invite modal ───────────────────────────────────────────────────────── */}
+      {isInviteModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 px-4 py-6">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+            <div className="mb-6 flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-semibold text-slate-900">Invite Member</h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  An invitation link will be sent to their email.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeInviteModal}
+                className="rounded-lg px-3 py-2 text-sm font-semibold text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+              >
+                ✕
+              </button>
+            </div>
+
+            {inviteError && (
+              <div className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                {inviteError}
+              </div>
+            )}
+
+            <form onSubmit={handleInvite} className="space-y-5">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-slate-700">Email address</label>
+                <input
+                  type="email"
+                  value={inviteForm.email}
+                  onChange={(e) => setInviteForm((current) => ({ ...current, email: e.target.value }))}
+                  placeholder="colleague@example.com"
+                  required
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-900"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-slate-700">Role</label>
+                <select
+                  value={inviteForm.role}
+                  onChange={(e) => setInviteForm((current) => ({ ...current, role: e.target.value }))}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-900"
+                >
+                  {availableRoles.map((r) => (
+                    <option key={r.value} value={r.value}>{r.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={closeInviteModal}
+                  className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isInviting}
+                  className="w-full rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isInviting ? "Sending..." : "Send Invitation"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
