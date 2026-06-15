@@ -15,6 +15,7 @@ async def get_redis() -> Redis:
             settings.REDIS_URL,
             decode_responses=True,
             max_connections=20,
+            protocol=2,
         )
         _redis_client = Redis(connection_pool=_redis_pool)
 
