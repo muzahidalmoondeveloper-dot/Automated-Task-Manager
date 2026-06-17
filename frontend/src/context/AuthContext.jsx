@@ -117,6 +117,7 @@ export function AuthProvider({ children }) {
 
     const data = await authApi.logout(payload);
     removeAccessToken();
+    setUser(null);
     return data;
   }
 

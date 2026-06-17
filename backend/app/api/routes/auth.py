@@ -354,8 +354,8 @@ async def logout(
     exp = token_payload.get("exp")
     user_id = token_payload.get("sub")
 
-    # if not jti or not exp or not user_id:
-    #     raise TokenError.invalid("Invalid token payload.")
+    if not jti or not exp or not user_id:
+        raise TokenError.invalid("Invalid token payload.")
 
     token_repo = RefreshTokenRepository(db)
 
