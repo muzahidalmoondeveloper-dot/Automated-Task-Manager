@@ -1,6 +1,9 @@
+import secrets
 import uuid
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
+from fastapi import status as http_status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -40,8 +43,6 @@ from app.schemas.organization import (
 )
 from app.schemas.user import UserRead
 from app.services.email_service import EmailService
-from fastapi import status as http_status
-from datetime import datetime, timezone
 
 _SLUG_TAKEN = ErrorDef(
     code="SLUG_TAKEN",
@@ -295,6 +296,57 @@ async def list_pending_invitations(
     repo = OrganizationRepository(db)
     invitations = await repo.list_pending_invitations(tenant.organization_id)
     return [InvitationRead.model_validate(i) for i in invitations]
+
+
+@router.delete(
+    "/current/invitations/{invitation_id}",
+    status_code=http_status.HTTP_204_NO_CONTENT,
+)
+async def revoke_invitation(
+    invitation_id: uuid.UUID,
+    tenant: TenantContext = Depends(require_org_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a pending invitation so the link is immediately invalidated."""
+    repo = OrganizationRepository(db)
+    invitation = await repo.get_invitation_by_id(tenant.organization_id, invitation_id)
+    if invitation is None or invitation.accepted_at is not None:
+        raise AppException(_INVITATION_INVALID)
+    await db.delete(invitation)
+    await db.commit()
+    return None
+
+
+@router.post(
+    "/current/invitations/{invitation_id}/resend",
+    response_model=InvitationRead,
+)
+async def resend_invitation(
+    invitation_id: uuid.UUID,
+    tenant: TenantContext = Depends(require_org_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Regenerate the invitation token, extend expiry by 72 h, and resend the email."""
+    repo = OrganizationRepository(db)
+    invitation = await repo.get_invitation_by_id(tenant.organization_id, invitation_id)
+    if invitation is None or invitation.accepted_at is not None:
+        raise AppException(_INVITATION_INVALID)
+
+    invitation.token = secrets.token_urlsafe(48)
+    invitation.expires_at = datetime.now(timezone.utc) + timedelta(hours=72)
+    await db.flush()
+    await db.commit()
+    await db.refresh(invitation)
+
+    email_service = EmailService()
+    email_service.send_invitation_email(
+        to_email=invitation.email,
+        org_name=tenant.organization.name,
+        inviter_name=tenant.user.full_name,
+        token=invitation.token,
+    )
+
+    return InvitationRead.model_validate(invitation)
 
 
 # ── Subscription & Usage ──────────────────────────────────────────────────────

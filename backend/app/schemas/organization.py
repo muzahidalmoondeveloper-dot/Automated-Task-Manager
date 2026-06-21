@@ -64,12 +64,13 @@ class OrganizationRead(BaseModel):
 
 
 class OrgSummary(BaseModel):
-    """Lightweight org info returned during multi-org login."""
+    """Lightweight org info for org lists and the switcher dropdown."""
     id: uuid.UUID
     name: str
     slug: str
     plan: str
-    role: str  # user's role in this org
+    role: str       # user's role in this org
+    is_current: bool = False  # True when this is the JWT-active org
 
     model_config = {"from_attributes": True}
 

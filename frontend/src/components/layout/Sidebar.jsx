@@ -4,6 +4,7 @@ import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import { projectApi } from "../../api/projectApi";
 import { teamApi } from "../../api/teamApi";
+import OrgSwitcher from "../OrgSwitcher";
 
 const THEME_STORAGE_KEY = "atm-theme";
 
@@ -819,6 +820,8 @@ function SidebarContent({
           </button>
         )}
       </div>
+
+      <OrgSwitcher collapsed={collapsed} />
 
       <div className="flex-1 overflow-y-auto px-3 py-4">
         <nav className="space-y-1">

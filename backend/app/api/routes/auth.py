@@ -124,8 +124,10 @@ async def _resolve_org_for_user(
 ) -> tuple[uuid.UUID | None, str | None, list[OrgSummary]]:
     """Return (org_id, org_role, all_orgs).
 
-    If the user has exactly one org → auto-select it.
-    If multiple or none → return None so the caller can prompt selection.
+    Selection priority:
+      1. user.last_active_organization_id  (if still an active member)
+      2. earliest joined active org (fallback)
+      3. None if the user belongs to no active org
     """
     result = await db.execute(
         select(Organization, OrganizationMembership)
@@ -135,8 +137,29 @@ async def _resolve_org_for_user(
             OrganizationMembership.is_active.is_(True),
             Organization.is_active.is_(True),
         )
+        .order_by(OrganizationMembership.joined_at.asc())
     )
     rows = result.all()
+
+    if not rows:
+        return None, None, []
+
+    # Determine the org to activate
+    selected_id: uuid.UUID | None = None
+    selected_role: str | None = None
+
+    if user.last_active_organization_id:
+        for org, membership in rows:
+            if org.id == user.last_active_organization_id:
+                selected_id = org.id
+                selected_role = membership.role
+                break
+
+    # Fall back to earliest joined org
+    if selected_id is None:
+        org, membership = rows[0]
+        selected_id = org.id
+        selected_role = membership.role
 
     orgs = [
         OrgSummary(
@@ -145,15 +168,12 @@ async def _resolve_org_for_user(
             slug=org.slug,
             plan=org.plan,
             role=membership.role,
+            is_current=(org.id == selected_id),
         )
         for org, membership in rows
     ]
 
-    if len(orgs) == 1:
-        org, membership = rows[0]
-        return org.id, membership.role, orgs
-
-    return None, None, orgs
+    return selected_id, selected_role, orgs
 
 
 # ── Registration ──────────────────────────────────────────────────────────────
@@ -373,10 +393,42 @@ async def verify_login_otp(
 async def my_organizations(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    token_payload: dict = Depends(AccessTokenBearer()),
 ):
-    """Return all organizations the current user belongs to."""
-    _, _, orgs = await _resolve_org_for_user(current_user, db)
-    return {"organizations": orgs}
+    """Return all organizations the current user belongs to, with is_current flag per JWT."""
+    current_org_id: uuid.UUID | None = None
+    raw_org_id = token_payload.get("org_id")
+    if raw_org_id:
+        try:
+            current_org_id = uuid.UUID(str(raw_org_id))
+        except ValueError:
+            pass
+
+    result = await db.execute(
+        select(Organization, OrganizationMembership)
+        .join(OrganizationMembership, OrganizationMembership.organization_id == Organization.id)
+        .where(
+            OrganizationMembership.user_id == current_user.id,
+            OrganizationMembership.is_active.is_(True),
+            Organization.is_active.is_(True),
+        )
+        .order_by(OrganizationMembership.joined_at.asc())
+    )
+    rows = result.all()
+
+    orgs = [
+        OrgSummary(
+            id=org.id,
+            name=org.name,
+            slug=org.slug,
+            plan=org.plan,
+            role=membership.role,
+            is_current=(org.id == current_org_id),
+        )
+        for org, membership in rows
+    ]
+
+    return {"organizations": orgs, "current": str(current_org_id) if current_org_id else None}
 
 
 @router.post("/select-organization/{org_id}", response_model=TokenResponse)
@@ -404,6 +456,10 @@ async def select_organization(
     membership = result.scalar_one_or_none()
     if membership is None:
         raise AppException(_NOT_ORG_MEMBER)
+
+    # Persist the chosen org so it is auto-restored on next login
+    current_user.last_active_organization_id = org_id
+    await db.flush()
 
     return await _issue_token_pair(current_user, db, token_cache, org_id=org_id, org_role=membership.role)
 
@@ -450,6 +506,45 @@ async def accept_invitation(
         org_id=invitation.organization_id,
         org_role=membership.role,
     )
+
+
+# ── Invitation preview (public) ───────────────────────────────────────────────
+
+@router.get("/invitation-preview")
+async def invitation_preview(
+    token: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Public endpoint — returns invitation details without requiring auth.
+    Used by the accept-invitation page to show org/role context before login."""
+    org_repo = OrganizationRepository(db)
+    invitation = await org_repo.get_invitation_by_token(token)
+
+    if invitation is None:
+        raise AppException(_INVITATION_NOT_FOUND)
+
+    now = datetime.now(timezone.utc)
+    expires_at = invitation.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at < now:
+        raise AppException(_INVITATION_EXPIRED)
+
+    if invitation.accepted_at is not None:
+        raise AppException(_INVITATION_ACCEPTED)
+
+    inviter_name = None
+    if invitation.invited_by:
+        inviter_name = invitation.invited_by.full_name
+
+    return {
+        "email": invitation.email,
+        "role": invitation.role,
+        "organization_name": invitation.organization.name if invitation.organization else None,
+        "organization_id": str(invitation.organization_id),
+        "expires_at": invitation.expires_at.isoformat(),
+        "invited_by_name": inviter_name,
+    }
 
 
 # ── Token management ──────────────────────────────────────────────────────────

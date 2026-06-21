@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import toast from "react-hot-toast";
 
 import { useAuth } from "../context/AuthContext";
@@ -22,6 +22,7 @@ function EyeIcon({ visible }) {
 
 export default function LoginPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
   const {
     login,
@@ -52,9 +53,11 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (!isAuthLoading && isAuthenticated) {
-      navigate("/dashboard", { replace: true });
+      const redirect = searchParams.get("redirect");
+      const safePath = redirect && redirect.startsWith("/") ? redirect : "/dashboard";
+      navigate(safePath, { replace: true });
     }
-  }, [isAuthLoading, isAuthenticated, navigate]);
+  }, [isAuthLoading, isAuthenticated, navigate, searchParams]);
 
   function handleChange(event) {
     const { name, value } = event.target;

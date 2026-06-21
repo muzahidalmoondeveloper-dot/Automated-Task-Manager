@@ -101,40 +101,63 @@ class EmailService:
             logger.info("[DEV OTP] Email: %s | Purpose: %s | OTP: %s", to_email, purpose, otp_code)
             return
 
-        subject = "Your verification code"
-        if purpose == "register":
-            title = "Verify your account"
-        elif purpose == "login":
-            title = "Confirm your login"
-        else:
-            title = "Verification code"
+        _purpose_map = {
+            "register":       ("Verify your account",   "Complete your registration"),
+            "login":          ("Confirm your login",     "Verify it's really you"),
+            "reset_password": ("Reset your password",   "Password reset requested"),
+        }
+        subject, headline = _purpose_map.get(purpose, ("Verification code", "Your verification code"))
 
-        body = f"""
-        {title}
+        # Large, prominent OTP block rendered as an accent card
+        otp_block = (
+            '<table cellpadding="0" cellspacing="0" border="0" width="100%"'
+            ' style="background:#f8fafc;border:2px dashed #cbd5e1;'
+            'border-radius:12px;margin:24px 0;">'
+            "<tr><td style=\"padding:28px;text-align:center;\">"
+            "<p style=\"margin:0 0 8px 0;font-size:12px;color:#64748b;font-weight:700;"
+            "letter-spacing:1px;text-transform:uppercase;\">Your verification code</p>"
+            f"<p style=\"margin:0;font-size:44px;font-weight:700;color:#0f172a;"
+            f"letter-spacing:12px;font-family:'Courier New',Courier,monospace;\">{otp_code}</p>"
+            "<p style=\"margin:10px 0 0 0;font-size:12px;color:#94a3b8;\">Expires in 10 minutes</p>"
+            "</td></tr></table>"
+        )
 
-        Your OTP code is: {otp_code}
+        html = self._build_html(
+            subject=subject,
+            headline=headline,
+            body_paragraphs=[
+                "Use the code below to complete your verification.",
+                "If you did not request this, you can safely ignore this email.",
+            ],
+            details=[],
+            cta_url=settings.FRONTEND_BASE_URL,
+            cta_label="Go to App",
+            accent_block=otp_block,
+        )
 
-        This code will expire in 10 minutes.
+        plain = (
+            f"{headline}\n\n"
+            f"Your verification code is: {otp_code}\n\n"
+            "This code will expire in 10 minutes.\n\n"
+            "If you did not request this, please ignore this email."
+        )
 
-        If you did not request this, please ignore this email.
-        """
-
-        message = MIMEMultipart("alternative")
-        message["Subject"] = subject
-        message["From"] = f"{settings.SMTP_FROM_NAME} <{settings.SMTP_FROM_EMAIL}>"
-        message["To"] = to_email
-        message.attach(MIMEText(body, "plain", "utf-8"))
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = f"{settings.SMTP_FROM_NAME} <{settings.SMTP_FROM_EMAIL}>"
+        msg["To"] = to_email
+        # plain must come first; HTML last so clients that support it prefer HTML
+        msg.attach(MIMEText(plain, "plain", "utf-8"))
+        msg.attach(MIMEText(html, "html", "utf-8"))
 
         try:
             with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=SMTP_TIMEOUT_SECONDS) as server:
                 server.starttls()
                 server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
-                server.send_message(message)
+                server.send_message(msg)
+            logger.info("OTP email sent | purpose=%s | to=%s", purpose, to_email)
         except Exception as exc:
-            logger.error(
-                "SMTP delivery failed for %s — falling back to console. Error: %s",
-                to_email, exc,
-            )
+            logger.error("SMTP OTP delivery failed for %s: %s", to_email, exc)
             logger.info("[FALLBACK OTP] Email: %s | Purpose: %s | OTP: %s", to_email, purpose, otp_code)
 
     # ═══════════════════════════════════════════════════════════════════════════
