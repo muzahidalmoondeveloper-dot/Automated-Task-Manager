@@ -30,18 +30,30 @@ class OrganizationRepository:
         slug: str,
         owner_id: int,
         plan: str = "free",
+        status: str = "active",
     ) -> Organization:
         org = Organization(
             id=uuid.uuid4(),
             name=name,
             slug=slug,
             plan=plan,
+            status=status,
             is_active=True,
             owner_id=owner_id,
         )
         self.db.add(org)
         await self.db.flush()
         return org
+
+    async def count_owned_orgs(self, user_id: int) -> int:
+        """Number of active organizations this user owns — used for plan/creation limits."""
+        result = await self.db.execute(
+            select(func.count(Organization.id)).where(
+                Organization.owner_id == user_id,
+                Organization.is_active.is_(True),
+            )
+        )
+        return result.scalar_one() or 0
 
     async def get_by_id(self, org_id: uuid.UUID) -> Organization | None:
         result = await self.db.execute(

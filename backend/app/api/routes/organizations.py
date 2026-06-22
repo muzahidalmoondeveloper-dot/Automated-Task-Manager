@@ -1,3 +1,4 @@
+import re
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -36,18 +37,54 @@ from app.schemas.organization import (
     OrgUsageRead,
     OrganizationCreate,
     OrganizationRead,
+    OrganizationSetupComplete,
     OrganizationUpdate,
     PlanLimitsRead,
+    SlugCheckResponse,
     SubscriptionRead,
     UpdateMemberRoleRequest,
 )
 from app.schemas.user import UserRead
 from app.services.email_service import EmailService
 
+# How many organizations a single user may own at once — a simple, generous
+# hard cap (plan tiers in this app are per-organization, not per-user, so a
+# plan-based limit per the original spec doesn't map cleanly onto this data model).
+MAX_OWNED_ORGS = 10
+
+
+def _normalize_slug(value: str) -> str:
+    return re.sub(r"[^a-z0-9-]", "", value.lower().strip())
+
 _SLUG_TAKEN = ErrorDef(
     code="SLUG_TAKEN",
     status=http_status.HTTP_409_CONFLICT,
     message="This organization slug is already taken.",
+)
+_ORG_LIMIT_REACHED = ErrorDef(
+    code="ORG_LIMIT_REACHED",
+    status=http_status.HTTP_403_FORBIDDEN,
+    message=f"You can own up to {MAX_OWNED_ORGS} organizations. Transfer or delete one to create another.",
+)
+_ORG_NOT_FOUND = ErrorDef(
+    code="ORG_NOT_FOUND",
+    status=http_status.HTTP_404_NOT_FOUND,
+    message="Organization not found.",
+)
+_NOT_ORG_OWNER = ErrorDef(
+    code="NOT_ORG_OWNER",
+    status=http_status.HTTP_403_FORBIDDEN,
+    message="Only the owner can complete organization setup.",
+)
+_SETUP_ALREADY_DONE = ErrorDef(
+    code="SETUP_ALREADY_DONE",
+    status=http_status.HTTP_409_CONFLICT,
+    message="Organization setup is already complete.",
+)
+_SLUG_TOO_SHORT = ErrorDef(
+    code="SLUG_TOO_SHORT",
+    status=http_status.HTTP_400_BAD_REQUEST,
+    message="Slug must be at least 2 characters.",
 )
 _ALREADY_MEMBER = ErrorDef(
     code="ALREADY_MEMBER",
@@ -79,6 +116,8 @@ async def _issue_org_token_pair(
     org_role: str,
     db: AsyncSession,
     token_cache: TokenCache,
+    org_status: str | None = None,
+    organization: dict | None = None,
 ) -> TokenResponse:
     access_token, _jti, exp = create_access_token(
         subject=str(user.id),
@@ -103,10 +142,28 @@ async def _issue_org_token_pair(
         refresh_token=refresh_str,
         expires_at=exp,
         user=user_read,
+        org_status=org_status,
+        organization=organization,
     )
 
 
 # ── Create organization ───────────────────────────────────────────────────────
+
+@router.get("/check-slug", response_model=SlugCheckResponse)
+async def check_slug_availability(
+    slug: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Real-time slug availability check for the create-organization form."""
+    normalized = _normalize_slug(slug)
+    if len(normalized) < 2:
+        raise AppException(_SLUG_TOO_SHORT)
+
+    repo = OrganizationRepository(db)
+    available = not await repo.slug_exists(normalized)
+    return SlugCheckResponse(slug=normalized, available=available)
+
 
 @router.post("", response_model=TokenResponse, status_code=http_status.HTTP_201_CREATED)
 async def create_organization(
@@ -115,11 +172,16 @@ async def create_organization(
     db: AsyncSession = Depends(get_db),
     token_cache: TokenCache = Depends(get_token_cache),
 ):
-    """Any authenticated user can create a new organization.
+    """Any authenticated user can create a new organization, independent of any
+    other org memberships they already have (e.g. joined via invitation).
     Returns a new org-scoped token pair so the caller is immediately in context."""
-    slug = payload.resolved_slug()
     repo = OrganizationRepository(db)
 
+    owned_count = await repo.count_owned_orgs(current_user.id)
+    if owned_count >= MAX_OWNED_ORGS:
+        raise AppException(_ORG_LIMIT_REACHED)
+
+    slug = payload.resolved_slug()
     if await repo.slug_exists(slug):
         raise AppException(_SLUG_TAKEN)
 
@@ -128,12 +190,57 @@ async def create_organization(
         slug=slug,
         owner_id=current_user.id,
         plan="free",
+        status="pending_setup",
     )
-    membership = await repo.add_member(org.id, current_user.id, role=OWNER)
+    await repo.add_member(org.id, current_user.id, role=OWNER)
     await repo.get_or_create_subscription(org.id, plan="free")
-    await db.commit()
 
-    return await _issue_org_token_pair(current_user, org.id, OWNER, db, token_cache)
+    # The newly created org becomes the user's active org going forward.
+    current_user.last_active_organization_id = org.id
+    await db.flush()
+    await db.commit()
+    # `users.updated_at` is server-evaluated (onupdate=func.now()) — the row was
+    # just UPDATEd above, so SQLAlchemy marks that column unloaded on this
+    # instance. Refresh now (inside an awaited call) so the later synchronous
+    # Pydantic read in _issue_org_token_pair doesn't trigger an async lazy-load.
+    await db.refresh(current_user)
+
+    return await _issue_org_token_pair(
+        current_user,
+        org.id,
+        OWNER,
+        db,
+        token_cache,
+        org_status=org.status,
+        organization=OrganizationRead.model_validate(org).model_dump(mode="json"),
+    )
+
+
+@router.put("/{org_id}/setup", response_model=OrganizationRead)
+async def complete_organization_setup(
+    org_id: uuid.UUID,
+    payload: OrganizationSetupComplete,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Final step of the creation wizard — saves details and marks the org active.
+    Only the owner may complete setup, and only while status is still pending_setup."""
+    repo = OrganizationRepository(db)
+    org = await repo.get_by_id(org_id)
+    if org is None:
+        raise AppException(_ORG_NOT_FOUND)
+    if org.owner_id != current_user.id:
+        raise AppException(_NOT_ORG_OWNER)
+    if org.status != "pending_setup":
+        raise AppException(_SETUP_ALREADY_DONE)
+
+    data = payload.model_dump(exclude_unset=True, exclude_none=True)
+    data["status"] = "active"
+    org = await repo.update(org, data)
+    await db.commit()
+    await db.refresh(org)
+
+    return OrganizationRead.model_validate(org)
 
 
 # ── Read / update / deactivate ────────────────────────────────────────────────
