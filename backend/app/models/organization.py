@@ -21,7 +21,11 @@ class Organization(Base):
     slug: Mapped[str] = mapped_column(String(100), nullable=False, unique=True, index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     logo_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    website: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    industry: Mapped[str | None] = mapped_column(String(100), nullable=True)
     plan: Mapped[str] = mapped_column(String(50), nullable=False, default="free", index=True)
+    # pending_setup | active — pending_setup until the creation wizard completes
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="active", index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     owner_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"),

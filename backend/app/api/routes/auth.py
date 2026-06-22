@@ -84,6 +84,7 @@ async def _issue_token_pair(
     token_cache: TokenCache,
     org_id: uuid.UUID | None = None,
     org_role: str | None = None,
+    org_status: str | None = None,
 ) -> TokenResponse:
     """Issue access + refresh tokens, persist the refresh token."""
     access_token, _jti, exp = create_access_token(
@@ -115,14 +116,15 @@ async def _issue_token_pair(
         refresh_token=refresh_str,
         expires_at=exp,
         user=user_read,
+        org_status=org_status,
     )
 
 
 async def _resolve_org_for_user(
     user: User,
     db: AsyncSession,
-) -> tuple[uuid.UUID | None, str | None, list[OrgSummary]]:
-    """Return (org_id, org_role, all_orgs).
+) -> tuple[uuid.UUID | None, str | None, str | None, list[OrgSummary]]:
+    """Return (org_id, org_role, org_status, all_orgs).
 
     Selection priority:
       1. user.last_active_organization_id  (if still an active member)
@@ -142,17 +144,19 @@ async def _resolve_org_for_user(
     rows = result.all()
 
     if not rows:
-        return None, None, []
+        return None, None, None, []
 
     # Determine the org to activate
     selected_id: uuid.UUID | None = None
     selected_role: str | None = None
+    selected_status: str | None = None
 
     if user.last_active_organization_id:
         for org, membership in rows:
             if org.id == user.last_active_organization_id:
                 selected_id = org.id
                 selected_role = membership.role
+                selected_status = org.status
                 break
 
     # Fall back to earliest joined org
@@ -160,6 +164,7 @@ async def _resolve_org_for_user(
         org, membership = rows[0]
         selected_id = org.id
         selected_role = membership.role
+        selected_status = org.status
 
     orgs = [
         OrgSummary(
@@ -168,12 +173,13 @@ async def _resolve_org_for_user(
             slug=org.slug,
             plan=org.plan,
             role=membership.role,
+            status=org.status,
             is_current=(org.id == selected_id),
         )
         for org, membership in rows
     ]
 
-    return selected_id, selected_role, orgs
+    return selected_id, selected_role, selected_status, orgs
 
 
 # ── Registration ──────────────────────────────────────────────────────────────
@@ -320,8 +326,10 @@ async def login(
         )
 
     # Resolve org context
-    org_id, org_role, orgs = await _resolve_org_for_user(user, db)
-    token_pair = await _issue_token_pair(user, db, token_cache, org_id=org_id, org_role=org_role)
+    org_id, org_role, org_status, orgs = await _resolve_org_for_user(user, db)
+    token_pair = await _issue_token_pair(
+        user, db, token_cache, org_id=org_id, org_role=org_role, org_status=org_status
+    )
 
     return LoginPasswordResponse(
         otp_required=False,
@@ -333,6 +341,7 @@ async def login(
         expires_at=token_pair.expires_at,
         token_type="bearer",
         user=token_pair.user,
+        org_status=org_status,
         requires_org_selection=org_id is None and len(orgs) > 1,
         organizations=orgs if org_id is None else [],
     )
@@ -369,8 +378,10 @@ async def verify_login_otp(
     await db.commit()
     await db.refresh(user)
 
-    org_id, org_role, orgs = await _resolve_org_for_user(user, db)
-    token_pair = await _issue_token_pair(user, db, token_cache, org_id=org_id, org_role=org_role)
+    org_id, org_role, org_status, orgs = await _resolve_org_for_user(user, db)
+    token_pair = await _issue_token_pair(
+        user, db, token_cache, org_id=org_id, org_role=org_role, org_status=org_status
+    )
 
     return LoginPasswordResponse(
         otp_required=False,
@@ -382,6 +393,7 @@ async def verify_login_otp(
         expires_at=token_pair.expires_at,
         token_type="bearer",
         user=token_pair.user,
+        org_status=org_status,
         requires_org_selection=org_id is None and len(orgs) > 1,
         organizations=orgs if org_id is None else [],
     )
@@ -423,6 +435,7 @@ async def my_organizations(
             slug=org.slug,
             plan=org.plan,
             role=membership.role,
+            status=org.status,
             is_current=(org.id == current_org_id),
         )
         for org, membership in rows
@@ -460,8 +473,15 @@ async def select_organization(
     # Persist the chosen org so it is auto-restored on next login
     current_user.last_active_organization_id = org_id
     await db.flush()
+    # `users.updated_at` is server-evaluated (onupdate=func.now()) — the row was
+    # just updated, so SQLAlchemy marks that column unloaded on this instance.
+    # Refresh now (inside an awaited call) so the later synchronous Pydantic
+    # read in _issue_token_pair doesn't trigger an async lazy-load.
+    await db.refresh(current_user)
 
-    return await _issue_token_pair(current_user, db, token_cache, org_id=org_id, org_role=membership.role)
+    return await _issue_token_pair(
+        current_user, db, token_cache, org_id=org_id, org_role=membership.role, org_status=org.status
+    )
 
 
 # ── Accept invitation ─────────────────────────────────────────────────────────
@@ -666,6 +686,7 @@ async def logout(
 @router.get("/me", response_model=AuthenticatedUserResponse)
 async def get_me(
     current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
     token_payload: dict = Depends(AccessTokenBearer()),
 ):
     user_read = UserRead.model_validate(current_user)
@@ -674,7 +695,18 @@ async def get_me(
         # Reflect the user's role in their *current* organization rather than
         # their global default — keeps the profile in sync with the active tenant.
         user_read = user_read.model_copy(update={"role": org_role})
-    return AuthenticatedUserResponse(user=user_read)
+
+    org_status: str | None = None
+    raw_org_id = token_payload.get("org_id")
+    if raw_org_id:
+        try:
+            org_status = await db.scalar(
+                select(Organization.status).where(Organization.id == uuid.UUID(str(raw_org_id)))
+            )
+        except ValueError:
+            pass
+
+    return AuthenticatedUserResponse(user=user_read, org_status=org_status)
 
 
 @router.post("/resend-otp")

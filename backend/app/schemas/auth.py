@@ -21,10 +21,16 @@ class TokenResponse(BaseModel):
     expires_at: int
     token_type: str = "bearer"
     user: UserRead
+    # Status of the org now active in this token — lets the frontend decide
+    # whether to resume the org-creation wizard ('pending_setup') or not.
+    org_status: str | None = None
+    # Populated only by org-creation — avoids a follow-up round trip for the new org's id.
+    organization: dict | None = None
 
 
 class AuthenticatedUserResponse(BaseModel):
     user: UserRead
+    org_status: str | None = None
 
 
 class VerifyRegisterOTPRequest(BaseModel):
@@ -49,6 +55,7 @@ class LoginPasswordResponse(BaseModel):
     expires_at: int | None = None
     token_type: str = "bearer"
     user: UserRead | None = None
+    org_status: str | None = None
     # Multi-org selection — populated when the user belongs to >1 org
     requires_org_selection: bool = False
     organizations: list = []  # list[OrgSummary] — typed as list to avoid circular import

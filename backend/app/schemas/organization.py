@@ -46,6 +46,8 @@ class OrganizationUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=2, max_length=255)
     description: str | None = None
     logo_url: str | None = None
+    website: str | None = None
+    industry: str | None = None
 
 
 class OrganizationRead(BaseModel):
@@ -54,13 +56,29 @@ class OrganizationRead(BaseModel):
     slug: str
     description: str | None
     logo_url: str | None
+    website: str | None = None
+    industry: str | None = None
     plan: str
+    status: str = "active"
     is_active: bool
     owner_id: int
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class OrganizationSetupComplete(BaseModel):
+    """Body for PUT /organizations/{id}/setup — final step of the creation wizard."""
+    name: str | None = Field(default=None, min_length=2, max_length=255)
+    logo_url: str | None = None
+    website: str | None = None
+    industry: str | None = None
+
+
+class SlugCheckResponse(BaseModel):
+    slug: str
+    available: bool
 
 
 class OrgSummary(BaseModel):
@@ -70,6 +88,7 @@ class OrgSummary(BaseModel):
     slug: str
     plan: str
     role: str       # user's role in this org
+    status: str = "active"
     is_current: bool = False  # True when this is the JWT-active org
 
     model_config = {"from_attributes": True}
