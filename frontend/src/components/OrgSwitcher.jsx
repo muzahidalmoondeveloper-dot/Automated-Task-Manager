@@ -62,9 +62,8 @@ export default function OrgSwitcher({ collapsed }) {
     let cancelled = false;
     authApi
       .myOrganizations()
-      .then((res) => {
+      .then((data) => {
         if (cancelled) return;
-        const data = res.data;
         setOrgs(data.organizations || []);
         const cur = (data.organizations || []).find((o) => o.is_current);
         setCurrentOrg(cur || null);
@@ -205,6 +204,11 @@ function OrgList({ orgs, switching, onSwitch, onCreateOrg }) {
                 </p>
                 <p className="truncate text-xs capitalize text-slate-500">
                   {org.role.replace(/_/g, " ")}
+                  {org.status === "pending_setup" && (
+                    <span className="ml-1.5 normal-case text-amber-600">
+                      · setup incomplete
+                    </span>
+                  )}
                 </p>
               </div>
 

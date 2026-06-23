@@ -29,12 +29,17 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [authError, setAuthError] = useState("");
+  // Status of the user's currently-active org ('pending_setup' | 'active' | null).
+  // Not derivable from the JWT (it can go stale mid-session), so it's tracked
+  // separately and refreshed via reloadUser()/loginWithToken().
+  const [orgStatus, setOrgStatus] = useState(null);
 
   const loadCurrentUser = useCallback(async () => {
     const token = getAccessToken();
 
     if (!token) {
       setUser(null);
+      setOrgStatus(null);
       setIsAuthLoading(false);
       return;
     }
@@ -45,9 +50,11 @@ export function AuthProvider({ children }) {
 
       const data = await authApi.me();
       setUser(data.user);
+      setOrgStatus(data.org_status ?? null);
     } catch (error) {
       removeAccessToken();
       setUser(null);
+      setOrgStatus(null);
       setAuthError(error.message || "Session expired.");
     } finally {
       setIsAuthLoading(false);
@@ -58,9 +65,10 @@ export function AuthProvider({ children }) {
     loadCurrentUser();
   }, [loadCurrentUser]);
 
-  function loginWithToken(accessToken, authenticatedUser) {
+  function loginWithToken(accessToken, authenticatedUser, status = null) {
     setAccessToken(accessToken);
     setUser(authenticatedUser);
+    setOrgStatus(status);
     setAuthError("");
   }
 
@@ -72,7 +80,7 @@ export function AuthProvider({ children }) {
   async function verifyRegisterOtp(payload) {
     setAuthError("");
     const data = await authApi.verifyRegisterOtp(payload);
-    loginWithToken(data.access_token, data.user);
+    loginWithToken(data.access_token, data.user, data.org_status);
     return data;
   }
 
@@ -95,7 +103,7 @@ export function AuthProvider({ children }) {
     }
 
     if (data.access_token && data.user) {
-      loginWithToken(data.access_token, data.user);
+      loginWithToken(data.access_token, data.user, data.org_status);
     }
 
     return data;
@@ -109,7 +117,7 @@ export function AuthProvider({ children }) {
       return data;
     }
 
-    loginWithToken(data.access_token, data.user);
+    loginWithToken(data.access_token, data.user, data.org_status);
     return data;
   }
 
@@ -117,19 +125,25 @@ export function AuthProvider({ children }) {
   async function selectOrganization(orgId) {
     setAuthError("");
     const data = await authApi.selectOrganization(orgId);
-    loginWithToken(data.access_token, data.user);
+    loginWithToken(data.access_token, data.user, data.org_status);
     return data;
   }
 
   function logout() {
     removeAccessToken();
     setUser(null);
+    setOrgStatus(null);
   }
 
   // Derive org context from the stored JWT without an extra network call.
   const token = getAccessToken();
   const jwtPayload = token ? parseJwt(token) : null;
   const hasOrgContext = Boolean(jwtPayload?.org_id);
+  const currentOrgId = jwtPayload?.org_id || null;
+  // True when the user's active org is still mid-creation-wizard and they're
+  // the owner — only the owner gets routed back to finish it; invited
+  // teammates can use a pending_setup org normally.
+  const needsOrgSetup = orgStatus === "pending_setup" && user?.role === "owner";
 
   const value = useMemo(
     () => ({
@@ -138,6 +152,9 @@ export function AuthProvider({ children }) {
       isAuthLoading,
       authError,
       hasOrgContext,
+      currentOrgId,
+      orgStatus,
+      needsOrgSetup,
 
       register,
       verifyRegisterOtp,
@@ -152,7 +169,7 @@ export function AuthProvider({ children }) {
       reloadUser: loadCurrentUser,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [user, isAuthLoading, authError, hasOrgContext, loadCurrentUser]
+    [user, isAuthLoading, authError, hasOrgContext, currentOrgId, orgStatus, needsOrgSetup, loadCurrentUser]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
