@@ -52,6 +52,7 @@ class EmailService:
         org_name: str,
         inviter_name: str,
         token: str,
+        role: str = "",
     ) -> None:
         from app.core.config import get_settings
         frontend_url = get_settings().FRONTEND_URL
@@ -65,32 +66,36 @@ class EmailService:
             return
 
         subject = f"You've been invited to join {org_name}"
-        html = f"""
-        <div style="font-family:sans-serif;max-width:480px;margin:0 auto;">
-          <h2>You're invited!</h2>
-          <p>{inviter_name} has invited you to join <strong>{org_name}</strong>.</p>
-          <p>
-            <a href="{accept_url}" style="background:#0f172a;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block;">
-              Accept Invitation
-            </a>
-          </p>
-          <p style="color:#64748b;font-size:12px;">This invitation expires in 72 hours.</p>
-        </div>
-        """
+        role_label = role.replace("_", " ").title() if role else ""
 
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = subject
-        msg["From"] = f"{settings.SMTP_FROM_NAME} <{settings.SMTP_FROM_EMAIL}>"
-        msg["To"] = to_email
-        msg.attach(MIMEText(html, "html"))
+        html = self._build_html(
+            subject=subject,
+            headline="You're invited!",
+            body_paragraphs=[
+                f"<strong>{inviter_name}</strong> has invited you to join <strong>{org_name}</strong>"
+                + (f" as <strong>{role_label}</strong>" if role_label else "")
+                + ".",
+                "Already have an account? Log in to accept the invitation below. "
+                "New here? You'll be asked to create a free account first — either way, "
+                "the button below takes you to the right next step.",
+            ],
+            details=[
+                ("Organization", org_name),
+                ("Invited by", inviter_name),
+                ("Role", role_label),
+            ],
+            cta_url=accept_url,
+            cta_label="View Invitation",
+        )
 
-        try:
-            with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=SMTP_TIMEOUT_SECONDS) as server:
-                server.starttls()
-                server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
-                server.sendmail(settings.SMTP_FROM_EMAIL, [to_email], msg.as_string())
-        except Exception as exc:
-            logger.warning("Invitation email failed: %s", exc)
+        success, err = self._send_smtp(
+            to_email=to_email,
+            subject=subject,
+            html_body=html,
+            event_type="org_invitation",
+        )
+        if not success:
+            logger.warning("Invitation email failed for %s: %s", to_email, err)
 
     # ═══════════════════════════════════════════════════════════════════════════
     # Existing OTP email (unchanged)
