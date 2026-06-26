@@ -135,8 +135,6 @@ class EmailService:
                 "If you did not request this, you can safely ignore this email.",
             ],
             details=[],
-            cta_url=settings.FRONTEND_BASE_URL,
-            cta_label="Go to App",
             accent_block=otp_block,
         )
 
@@ -176,8 +174,8 @@ class EmailService:
         headline: str,
         body_paragraphs: list[str],
         details: list[tuple[str, str]],
-        cta_url: str,
-        cta_label: str,
+        cta_url: str = "",
+        cta_label: str = "",
         accent_block: str = "",
     ) -> str:
         """Return a complete HTML email string."""
@@ -211,6 +209,26 @@ class EmailService:
             f'{p}</p>'
             for p in body_paragraphs
         )
+
+        cta_block = ""
+        if cta_url and cta_label:
+            cta_block = f"""
+        <!-- CTA button -->
+        <table cellpadding="0" cellspacing="0" border="0" style="margin-top:28px;">
+          <tr>
+            <td style="background:#10b981;border-radius:9px;">
+              <a href="{cta_url}"
+                style="display:inline-block;padding:13px 30px;color:white;
+                  text-decoration:none;font-weight:600;font-size:15px;
+                  letter-spacing:-0.1px;">{cta_label} &rarr;</a>
+            </td>
+          </tr>
+        </table>
+
+        <p style="color:#94a3b8;font-size:12px;margin:28px 0 0 0;line-height:1.5;">
+          If the button doesn't work, copy this link into your browser:<br>
+          <a href="{cta_url}" style="color:#10b981;word-break:break-all;">{cta_url}</a>
+        </p>"""
 
         app_name = settings.APP_NAME
 
@@ -266,22 +284,7 @@ class EmailService:
 
         {details_card}
 
-        <!-- CTA button -->
-        <table cellpadding="0" cellspacing="0" border="0" style="margin-top:28px;">
-          <tr>
-            <td style="background:#10b981;border-radius:9px;">
-              <a href="{cta_url}"
-                style="display:inline-block;padding:13px 30px;color:white;
-                  text-decoration:none;font-weight:600;font-size:15px;
-                  letter-spacing:-0.1px;">{cta_label} &rarr;</a>
-            </td>
-          </tr>
-        </table>
-
-        <p style="color:#94a3b8;font-size:12px;margin:28px 0 0 0;line-height:1.5;">
-          If the button doesn't work, copy this link into your browser:<br>
-          <a href="{cta_url}" style="color:#10b981;word-break:break-all;">{cta_url}</a>
-        </p>
+        {cta_block}
       </td>
     </tr>
 

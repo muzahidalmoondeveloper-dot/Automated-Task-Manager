@@ -557,6 +557,9 @@ async def invitation_preview(
     if invitation.invited_by:
         inviter_name = invitation.invited_by.full_name
 
+    user_repo = UserRepository(db)
+    existing_user = await user_repo.get_by_email(invitation.email)
+
     return {
         "email": invitation.email,
         "role": invitation.role,
@@ -564,6 +567,9 @@ async def invitation_preview(
         "organization_id": str(invitation.organization_id),
         "expires_at": invitation.expires_at.isoformat(),
         "invited_by_name": inviter_name,
+        # Lets the accept-invitation page show the single right action —
+        # "Log in" if this email already has an account, "Create account" if not.
+        "account_exists": existing_user is not None,
     }
 
 
