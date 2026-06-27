@@ -14,6 +14,7 @@ export default function LogoutScreen() {
 
   async function handleLogout() {
     try{
+      setLoggedOut(false);
       setLoading(true);
       const response = await logout();
 
@@ -44,7 +45,7 @@ export default function LogoutScreen() {
             See you next time, {userName && userName.split(" ")[0]}!
           </p>
           <button
-            onClick={() => { navigate('/login') }}
+            onClick={() => navigate('/login') }
             className="w-full py-2.5 rounded-lg border border-zinc-700 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 transition-colors cursor-pointer"
           >
             Sign back in
