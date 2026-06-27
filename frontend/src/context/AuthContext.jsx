@@ -86,9 +86,9 @@ export function AuthProvider({ children }) {
       return data;
     }
 
-    if (data.refresh_token && data.user) {
-      console.log("checked",data.refreshToken);
-      loginWithToken(data.refresh_token, data.user);
+    if (data['refresh_token'] && data['user']) {
+      console.log("checked",data['refresh_token']+">>>>>> "+data['user']);
+      loginWithToken(data['refresh_token'], data['user']);
     }
 
     return data;
