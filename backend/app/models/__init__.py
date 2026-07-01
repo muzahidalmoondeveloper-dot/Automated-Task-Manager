@@ -16,5 +16,7 @@ from app.models.email_notification_log import EmailNotificationLog
 from app.models.org_value import OrgValue
 from app.models.objective import Objective
 from app.models.org_role import OrgRole
-from app.models.team_news import TeamNews
-from app.models.rock import Rock, Milestone
+from app.models.team_news import TeamNews, TeamNewsLink
+from app.models.rock import Rock, Milestone, RockLink
+from app.models.kpi import KPI, KPIEntry, KpiLink
+from app.models.issue import Issue, IssueLink

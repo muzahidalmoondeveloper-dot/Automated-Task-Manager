@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime
 from typing import Optional
 
-from sqlalchemy import Date, DateTime, Float, ForeignKey, Integer, JSON, String, Text, Uuid
+from sqlalchemy import Date, DateTime, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
@@ -39,6 +39,13 @@ class KPI(Base):
         order_by="KPIEntry.period_start.desc()",
         cascade="all, delete-orphan",
     )
+    links: Mapped[list["KpiLink"]] = relationship(
+        "KpiLink",
+        back_populates="kpi",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+        order_by="KpiLink.id",
+    )
 
 
 class KPIEntry(Base):
@@ -54,3 +61,19 @@ class KPIEntry(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     kpi = relationship("KPI", back_populates="entries")
+
+
+class KpiLink(Base):
+    __tablename__ = "kpi_links"
+    __table_args__ = (
+        UniqueConstraint("kpi_id", "linked_type", "linked_id", name="uq_kpi_link"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    kpi_id: Mapped[int] = mapped_column(Integer, ForeignKey("kpis.id", ondelete="CASCADE"), nullable=False, index=True)
+    linked_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    linked_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    kpi: Mapped["KPI"] = relationship("KPI", back_populates="links")

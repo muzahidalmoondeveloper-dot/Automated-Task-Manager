@@ -4,8 +4,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.tenant import TenantContext, get_tenant_context
-from app.models.rock import Milestone, Rock
-from app.schemas.rock import RockCreate, RockOut, RockUpdate
+from app.models.rock import Milestone, Rock, RockLink
+from app.schemas.rock import EntityLinkIn, RockCreate, RockOut, RockUpdate
+
+
+def _apply_links(rock: Rock, links: list[EntityLinkIn]) -> None:
+    rock.links = [
+        RockLink(linked_type=l.linked_type, linked_id=l.linked_id, title=l.title)
+        for l in links
+    ]
 
 router = APIRouter(prefix="/teams/{team_id}/rocks", tags=["rocks"])
 
@@ -32,11 +39,12 @@ async def create_rock(
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     milestones_data = payload.milestones or []
-    rock_data = payload.model_dump(exclude={"milestones"})
+    rock_data = payload.model_dump(exclude={"milestones", "links"})
     rock = Rock(team_id=team_id, organization_id=tenant.organization_id, **rock_data)
     for i, m in enumerate(milestones_data):
         milestone = Milestone(sort_order=i, **m.model_dump(exclude={"id", "sort_order"}))
         rock.milestones.append(milestone)
+    _apply_links(rock, payload.links)
     db.add(rock)
     await db.commit()
     await db.refresh(rock)
@@ -62,17 +70,19 @@ async def update_rock(
     if not rock:
         raise HTTPException(status_code=404, detail="Rock not found")
 
-    for key, value in payload.model_dump(exclude_unset=True, exclude={"milestones"}).items():
+    for key, value in payload.model_dump(exclude_unset=True, exclude={"milestones", "links"}).items():
         setattr(rock, key, value)
 
     if payload.milestones is not None:
-        # Replace strategy: delete existing, recreate from payload
         for m in list(rock.milestones):
             await db.delete(m)
         await db.flush()
         for i, m_data in enumerate(payload.milestones):
             milestone = Milestone(rock_id=rock_id, sort_order=i, **m_data.model_dump(exclude={"id", "sort_order"}))
             db.add(milestone)
+
+    if payload.links is not None:
+        _apply_links(rock, payload.links)
 
     await db.commit()
     await db.refresh(rock)

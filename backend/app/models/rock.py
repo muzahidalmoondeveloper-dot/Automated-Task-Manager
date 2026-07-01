@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, JSON, String, Text, Uuid
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
@@ -36,6 +36,13 @@ class Rock(Base):
         order_by="Milestone.sort_order",
         cascade="all, delete-orphan",
     )
+    links: Mapped[list["RockLink"]] = relationship(
+        "RockLink",
+        back_populates="rock",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+        order_by="RockLink.id",
+    )
 
 
 class Milestone(Base):
@@ -51,3 +58,19 @@ class Milestone(Base):
 
     rock = relationship("Rock", back_populates="milestones")
     owner = relationship("User", foreign_keys=[owner_id], lazy="selectin")
+
+
+class RockLink(Base):
+    __tablename__ = "rock_links"
+    __table_args__ = (
+        UniqueConstraint("rock_id", "linked_type", "linked_id", name="uq_rock_link"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    rock_id: Mapped[int] = mapped_column(Integer, ForeignKey("rocks.id", ondelete="CASCADE"), nullable=False, index=True)
+    linked_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    linked_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    rock: Mapped["Rock"] = relationship("Rock", back_populates="links")

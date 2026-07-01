@@ -4,8 +4,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.tenant import TenantContext, get_tenant_context
-from app.models.issue import Issue
-from app.schemas.issue import IssueCreate, IssueUpdate, IssueOut
+from app.models.issue import Issue, IssueLink
+from app.schemas.issue import EntityLinkIn, IssueCreate, IssueUpdate, IssueOut
+
+
+def _apply_links(issue: Issue, links: list[EntityLinkIn]) -> None:
+    issue.links = [
+        IssueLink(linked_type=l.linked_type, linked_id=l.linked_id, title=l.title)
+        for l in links
+    ]
 
 router = APIRouter(prefix="/teams/{team_id}/issues", tags=["issues"])
 
@@ -35,7 +42,8 @@ async def create_issue(
     db: AsyncSession = Depends(get_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
-    issue = Issue(team_id=team_id, organization_id=tenant.organization_id, **payload.model_dump())
+    issue = Issue(team_id=team_id, organization_id=tenant.organization_id, **payload.model_dump(exclude={"links"}))
+    _apply_links(issue, payload.links)
     db.add(issue)
     await db.commit()
     await db.refresh(issue)
@@ -60,8 +68,10 @@ async def update_issue(
     issue = result.scalar_one_or_none()
     if not issue:
         raise HTTPException(status_code=404, detail="Issue not found")
-    for field, value in payload.model_dump(exclude_none=True).items():
+    for field, value in payload.model_dump(exclude_none=True, exclude={"links"}).items():
         setattr(issue, field, value)
+    if payload.links is not None:
+        _apply_links(issue, payload.links)
     await db.commit()
     await db.refresh(issue)
     return issue
