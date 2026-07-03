@@ -543,7 +543,7 @@ function SidebarContent({
   function handleLogout() {
    setProfileOpen(false);
    console.log('handle-logout',true);
-    navigate("/logout", { replace: true });
+   navigate("/logout", { replace: true });
   }
 
   function handleClickNav() {

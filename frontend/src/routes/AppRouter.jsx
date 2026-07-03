@@ -5,7 +5,7 @@ import ProtectedRoute from "./ProtectedRoute";
 import LoginPage from "../pages/LoginPage";
 import RegisterPage from "../pages/RegisterPage";
 import ForgotPasswordPage from "../pages/ForgotPasswordPage";
-import DashboardPage from "../pages/DashboardPage";
+import DashboardPage from "../pages/dashboard/Dashboard";
 import UsersPage from "../pages/UsersPage";
 import TeamsPage from "../pages/TeamsPage";
 import ProjectsPage from "../pages/ProjectsPage";

@@ -80,15 +80,17 @@ export function AuthProvider({ children }) {
     setAuthError("");
 
     const data = await authApi.login(payload);
-      console.log("checked-token",data['refresh_token']);
+      console.log("checked-access-token",data['access_token']);
+      console.log("checked-access-token-model",data.access_token);
+
 
     if (data.otp_required || data.email_verification_required) {
       return data;
     }
 
-    if (data['refresh_token'] && data['user']) {
-      console.log("checked",data['refresh_token']+">>>>>> "+data['user']);
-      loginWithToken(data['refresh_token'], data['user']);
+    if (data.access_token && data.user) {
+      console.log("checked",data.access_token+">>>>>> "+data.user);
+      loginWithToken(data.access_token, data.user);
     }
 
     return data;
@@ -112,12 +114,14 @@ export function AuthProvider({ children }) {
     }
     const payload = {
       refresh_token: refreshToken,
-      logout_all_devices: true,
+      logout_all_devices: false,
     }
 
     const data = await authApi.logout(payload);
-    removeAccessToken();
+    if(data){
+    //removeAccessToken();
     setUser(null);
+    }
     return data;
   }
 
