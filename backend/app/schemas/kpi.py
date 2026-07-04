@@ -1,7 +1,29 @@
 from datetime import date, datetime
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
+LINKABLE_TYPES = {"objective", "rock", "task", "kpi"}
+
+
+class EntityLinkIn(BaseModel):
+    linked_type: str
+    linked_id: int
+    title: str
+
+    @field_validator("linked_type")
+    @classmethod
+    def validate_linked_type(cls, v: str) -> str:
+        if v not in LINKABLE_TYPES:
+            raise ValueError(f"linked_type must be one of: {', '.join(sorted(LINKABLE_TYPES))}")
+        return v
+
+
+class EntityLinkOut(BaseModel):
+    linked_type: str
+    linked_id: int
+    title: str
+    model_config = {"from_attributes": True}
 
 
 class KPIEntryUpsert(BaseModel):
@@ -64,6 +86,7 @@ class KPICreate(BaseModel):
     target_type: Optional[str] = "number"
     formula: Optional[str] = None
     reference_value: Optional[float] = None
+    links: list[EntityLinkIn] = []
 
 
 class KPIUpdate(BaseModel):
@@ -78,6 +101,8 @@ class KPIUpdate(BaseModel):
     target_type: Optional[str] = None
     formula: Optional[str] = None
     reference_value: Optional[float] = None
+    team_id: Optional[int] = None
+    links: Optional[list[EntityLinkIn]] = None
 
 
 class KPIOut(BaseModel):
@@ -97,6 +122,7 @@ class KPIOut(BaseModel):
     owner: Optional[OwnerRef] = None
     rock: Optional[RockRef] = None
     entries: list[KPIEntryOut] = []
+    links: list[EntityLinkOut] = []
     created_at: datetime
     updated_at: datetime
 

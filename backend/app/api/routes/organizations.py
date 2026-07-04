@@ -390,6 +390,7 @@ async def invite_member(
         org_name=tenant.organization.name,
         inviter_name=tenant.user.full_name,
         token=invitation.token,
+        role=invitation.role,
     )
 
     return InvitationRead.model_validate(invitation)
@@ -451,6 +452,7 @@ async def resend_invitation(
         org_name=tenant.organization.name,
         inviter_name=tenant.user.full_name,
         token=invitation.token,
+        role=invitation.role,
     )
 
     return InvitationRead.model_validate(invitation)

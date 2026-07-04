@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, Uuid
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
@@ -24,3 +24,26 @@ class Issue(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     assignee = relationship("User", foreign_keys=[assignee_id], lazy="selectin")
+    links: Mapped[list["IssueLink"]] = relationship(
+        "IssueLink",
+        back_populates="issue",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+        order_by="IssueLink.id",
+    )
+
+
+class IssueLink(Base):
+    __tablename__ = "issue_links"
+    __table_args__ = (
+        UniqueConstraint("issue_id", "linked_type", "linked_id", name="uq_issue_link"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    issue_id: Mapped[int] = mapped_column(Integer, ForeignKey("issues.id", ondelete="CASCADE"), nullable=False, index=True)
+    linked_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    linked_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    issue: Mapped["Issue"] = relationship("Issue", back_populates="links")

@@ -4,10 +4,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.tenant import TenantContext, get_tenant_context
-from app.models.team_news import TeamNews
-from app.schemas.team_news import NewsCreate, NewsOut, NewsUpdate
+from app.models.team_news import TeamNews, TeamNewsLink
+from app.repositories.team_repository import TeamRepository
+from app.schemas.team_news import NewsCreate, NewsLinkIn, NewsOut, NewsUpdate
 
 router = APIRouter(prefix="/teams/{team_id}/news", tags=["team-news"])
+
+
+async def _validate_team(db: AsyncSession, tenant: TenantContext, team_id: int) -> None:
+    """Raise 404 if team_id doesn't belong to the caller's org."""
+    team = await TeamRepository(db, tenant.organization_id).get_by_id(team_id)
+    if team is None:
+        raise HTTPException(status_code=404, detail="Team not found")
+
+
+def _apply_links(news: TeamNews, links: list[NewsLinkIn]) -> None:
+    news.links = [
+        TeamNewsLink(linked_type=link.linked_type, linked_id=link.linked_id, title=link.title)
+        for link in links
+    ]
 
 
 @router.get("", response_model=list[NewsOut])
@@ -24,7 +39,7 @@ async def list_news(
         )
         .order_by(TeamNews.created_at.desc())
     )
-    return result.scalars().all()
+    return result.scalars().unique().all()
 
 
 @router.post("", response_model=NewsOut, status_code=status.HTTP_201_CREATED)
@@ -34,7 +49,11 @@ async def create_news(
     db: AsyncSession = Depends(get_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
-    news = TeamNews(team_id=team_id, organization_id=tenant.organization_id, **payload.model_dump())
+    await _validate_team(db, tenant, team_id)
+
+    data = payload.model_dump(exclude={"links"})
+    news = TeamNews(team_id=team_id, organization_id=tenant.organization_id, **data)
+    _apply_links(news, payload.links)
     db.add(news)
     await db.commit()
     await db.refresh(news)
@@ -59,8 +78,19 @@ async def update_news(
     news = result.scalar_one_or_none()
     if not news:
         raise HTTPException(status_code=404, detail="News not found")
-    for key, value in payload.model_dump(exclude_unset=True).items():
+
+    data = payload.model_dump(exclude_unset=True, exclude={"links"})
+    new_team_id = data.pop("team_id", None)
+    if new_team_id is not None:
+        await _validate_team(db, tenant, new_team_id)
+        news.team_id = new_team_id
+
+    for key, value in data.items():
         setattr(news, key, value)
+
+    if payload.links is not None:
+        _apply_links(news, payload.links)
+
     await db.commit()
     await db.refresh(news)
     return news

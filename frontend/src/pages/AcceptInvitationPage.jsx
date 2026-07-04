@@ -118,20 +118,28 @@ export default function AcceptInvitationPage() {
           >
             {accepting ? "Accepting..." : "Accept Invitation"}
           </button>
-        ) : (
+        ) : preview?.account_exists ? (
           <div className="space-y-3">
-            <p className="text-center text-sm text-slate-600">Sign in to accept this invitation</p>
+            <p className="text-center text-sm text-slate-600">
+              An account already exists for this email. Log in to accept this invitation.
+            </p>
             <Link
               to={`/login?redirect=${encodeURIComponent(redirectPath)}`}
               className="block w-full rounded-lg bg-slate-900 px-4 py-2.5 text-center text-sm font-semibold text-white hover:bg-slate-800"
             >
-              Log in
+              Log in to accept
             </Link>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-center text-sm text-slate-600">
+              No account found for this email yet. Create one to accept this invitation.
+            </p>
             <Link
               to={`/register?invite=${encodeURIComponent(token)}`}
-              className="block w-full rounded-lg border border-slate-300 px-4 py-2.5 text-center text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              className="block w-full rounded-lg bg-slate-900 px-4 py-2.5 text-center text-sm font-semibold text-white hover:bg-slate-800"
             >
-              Create account
+              Create account to accept
             </Link>
           </div>
         )}

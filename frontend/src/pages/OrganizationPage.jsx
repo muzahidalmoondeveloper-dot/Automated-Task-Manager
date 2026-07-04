@@ -817,14 +817,25 @@ function OrgChartTab({ canManage }) {
   const scaleRef = useRef(1);
   const chartContainerRef = useRef(null);
   const innerCanvasRef = useRef(null);
+  const hasCenteredRef = useRef(false);
 
   useEffect(() => { load(); }, []);
 
+  // Center once whenever the chart canvas first mounts with content — on
+  // initial load, and again when the very first role is created (which
+  // flips roles.length 0 -> 1 without loading/view changing). Don't re-center
+  // on every later edit, or it would discard the user's manual pan/zoom.
   useLayoutEffect(() => {
-    if (!loading && roles.length > 0 && view === "chart") {
+    if (loading || view !== "chart") return;
+    if (roles.length === 0) {
+      hasCenteredRef.current = false;
+      return;
+    }
+    if (!hasCenteredRef.current) {
+      hasCenteredRef.current = true;
       centerChart();
     }
-  }, [loading, view]);
+  }, [loading, view, roles.length]);
 
   // Attach non-passive wheel listener so we can preventDefault (prevents page scroll while zooming).
   useEffect(() => {

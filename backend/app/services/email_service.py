@@ -52,6 +52,7 @@ class EmailService:
         org_name: str,
         inviter_name: str,
         token: str,
+        role: str = "",
     ) -> None:
         from app.core.config import get_settings
         frontend_url = get_settings().FRONTEND_URL
@@ -65,32 +66,36 @@ class EmailService:
             return
 
         subject = f"You've been invited to join {org_name}"
-        html = f"""
-        <div style="font-family:sans-serif;max-width:480px;margin:0 auto;">
-          <h2>You're invited!</h2>
-          <p>{inviter_name} has invited you to join <strong>{org_name}</strong>.</p>
-          <p>
-            <a href="{accept_url}" style="background:#0f172a;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block;">
-              Accept Invitation
-            </a>
-          </p>
-          <p style="color:#64748b;font-size:12px;">This invitation expires in 72 hours.</p>
-        </div>
-        """
+        role_label = role.replace("_", " ").title() if role else ""
 
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = subject
-        msg["From"] = f"{settings.SMTP_FROM_NAME} <{settings.SMTP_FROM_EMAIL}>"
-        msg["To"] = to_email
-        msg.attach(MIMEText(html, "html"))
+        html = self._build_html(
+            subject=subject,
+            headline="You're invited!",
+            body_paragraphs=[
+                f"<strong>{inviter_name}</strong> has invited you to join <strong>{org_name}</strong>"
+                + (f" as <strong>{role_label}</strong>" if role_label else "")
+                + ".",
+                "Already have an account? Log in to accept the invitation below. "
+                "New here? You'll be asked to create a free account first — either way, "
+                "the button below takes you to the right next step.",
+            ],
+            details=[
+                ("Organization", org_name),
+                ("Invited by", inviter_name),
+                ("Role", role_label),
+            ],
+            cta_url=accept_url,
+            cta_label="View Invitation",
+        )
 
-        try:
-            with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=SMTP_TIMEOUT_SECONDS) as server:
-                server.starttls()
-                server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
-                server.sendmail(settings.SMTP_FROM_EMAIL, [to_email], msg.as_string())
-        except Exception as exc:
-            logger.warning("Invitation email failed: %s", exc)
+        success, err = self._send_smtp(
+            to_email=to_email,
+            subject=subject,
+            html_body=html,
+            event_type="org_invitation",
+        )
+        if not success:
+            logger.warning("Invitation email failed for %s: %s", to_email, err)
 
     # ═══════════════════════════════════════════════════════════════════════════
     # Existing OTP email (unchanged)
@@ -130,8 +135,6 @@ class EmailService:
                 "If you did not request this, you can safely ignore this email.",
             ],
             details=[],
-            cta_url=settings.FRONTEND_BASE_URL,
-            cta_label="Go to App",
             accent_block=otp_block,
         )
 
@@ -171,8 +174,8 @@ class EmailService:
         headline: str,
         body_paragraphs: list[str],
         details: list[tuple[str, str]],
-        cta_url: str,
-        cta_label: str,
+        cta_url: str = "",
+        cta_label: str = "",
         accent_block: str = "",
     ) -> str:
         """Return a complete HTML email string."""
@@ -206,6 +209,26 @@ class EmailService:
             f'{p}</p>'
             for p in body_paragraphs
         )
+
+        cta_block = ""
+        if cta_url and cta_label:
+            cta_block = f"""
+        <!-- CTA button -->
+        <table cellpadding="0" cellspacing="0" border="0" style="margin-top:28px;">
+          <tr>
+            <td style="background:#10b981;border-radius:9px;">
+              <a href="{cta_url}"
+                style="display:inline-block;padding:13px 30px;color:white;
+                  text-decoration:none;font-weight:600;font-size:15px;
+                  letter-spacing:-0.1px;">{cta_label} &rarr;</a>
+            </td>
+          </tr>
+        </table>
+
+        <p style="color:#94a3b8;font-size:12px;margin:28px 0 0 0;line-height:1.5;">
+          If the button doesn't work, copy this link into your browser:<br>
+          <a href="{cta_url}" style="color:#10b981;word-break:break-all;">{cta_url}</a>
+        </p>"""
 
         app_name = settings.APP_NAME
 
@@ -261,22 +284,7 @@ class EmailService:
 
         {details_card}
 
-        <!-- CTA button -->
-        <table cellpadding="0" cellspacing="0" border="0" style="margin-top:28px;">
-          <tr>
-            <td style="background:#10b981;border-radius:9px;">
-              <a href="{cta_url}"
-                style="display:inline-block;padding:13px 30px;color:white;
-                  text-decoration:none;font-weight:600;font-size:15px;
-                  letter-spacing:-0.1px;">{cta_label} &rarr;</a>
-            </td>
-          </tr>
-        </table>
-
-        <p style="color:#94a3b8;font-size:12px;margin:28px 0 0 0;line-height:1.5;">
-          If the button doesn't work, copy this link into your browser:<br>
-          <a href="{cta_url}" style="color:#10b981;word-break:break-all;">{cta_url}</a>
-        </p>
+        {cta_block}
       </td>
     </tr>
 

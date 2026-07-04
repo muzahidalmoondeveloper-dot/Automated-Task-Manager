@@ -4,8 +4,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.tenant import TenantContext, get_tenant_context
-from app.models.kpi import KPI, KPIEntry
-from app.schemas.kpi import KPICreate, KPIUpdate, KPIOut, KPIEntryUpsert, KPIEntryOut, KPIEntryAddNote, KPIReorderItem, KPINoteUpdate
+from app.models.kpi import KPI, KPIEntry, KpiLink
+from app.schemas.kpi import EntityLinkIn, KPICreate, KPIUpdate, KPIOut, KPIEntryUpsert, KPIEntryOut, KPIEntryAddNote, KPIReorderItem, KPINoteUpdate
+
+
+def _apply_links(kpi: KPI, links: list[EntityLinkIn]) -> None:
+    kpi.links = [
+        KpiLink(linked_type=l.linked_type, linked_id=l.linked_id, title=l.title)
+        for l in links
+    ]
 
 router = APIRouter(tags=["kpis"])
 
@@ -82,7 +89,8 @@ async def create_kpi(
     db: AsyncSession = Depends(get_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
-    kpi = KPI(team_id=team_id, organization_id=tenant.organization_id, **payload.model_dump())
+    kpi = KPI(team_id=team_id, organization_id=tenant.organization_id, **payload.model_dump(exclude={"links"}))
+    _apply_links(kpi, payload.links)
     db.add(kpi)
     await db.commit()
     await db.refresh(kpi)
@@ -98,8 +106,10 @@ async def update_kpi(
     tenant: TenantContext = Depends(get_tenant_context),
 ):
     kpi = await _get_kpi_or_404(db, team_id, kpi_id, tenant.organization_id)
-    for field, value in payload.model_dump(exclude_none=True).items():
+    for field, value in payload.model_dump(exclude_none=True, exclude={"links"}).items():
         setattr(kpi, field, value)
+    if payload.links is not None:
+        _apply_links(kpi, payload.links)
     await db.commit()
     await db.refresh(kpi)
     return kpi

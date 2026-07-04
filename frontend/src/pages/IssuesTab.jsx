@@ -1,7 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import DOMPurify from "dompurify";
 import toast from "react-hot-toast";
 import { issueApi } from "../api/issueApi";
+import { rockApi } from "../api/rockApi";
+import { kpiApi } from "../api/kpiApi";
+import { taskApi } from "../api/taskApi";
+import { organizationApi } from "../api/organizationApi";
+import { teamApi } from "../api/teamApi";
 import { useAuth } from "../context/AuthContext";
 import RichEditor from "../components/RichEditor";
 
@@ -43,6 +48,33 @@ const PRIORITY_COLORS = [
 
 const PRIORITY_LABELS = ["None", "Low", "Medium", "High", "Urgent", "Critical"];
 
+// ─── Links helpers ────────────────────────────────────────────────────────────
+
+const LINK_TYPE_LABELS = { objective: "Objective", rock: "Rock", task: "To-Do", kpi: "KPI" };
+
+function LinkTypeIcon({ type, className = "h-3.5 w-3.5" }) {
+  if (type === "objective") return (
+    <svg className={className} viewBox="0 0 20 20" fill="currentColor">
+      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm0-2.5a5.5 5.5 0 110-11 5.5 5.5 0 010 11zm0-2.5a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd" />
+    </svg>
+  );
+  if (type === "rock") return (
+    <svg className={className} viewBox="0 0 20 20" fill="currentColor">
+      <path d="M10 2L3 7l2.5 11h9L17 7l-7-5z" />
+    </svg>
+  );
+  if (type === "kpi") return (
+    <svg className={className} viewBox="0 0 20 20" fill="currentColor">
+      <path fillRule="evenodd" d="M3 13a1 1 0 011-1h1a1 1 0 011 1v4a1 1 0 01-1 1H4a1 1 0 01-1-1v-4zM8 9a1 1 0 011-1h1a1 1 0 011 1v8a1 1 0 01-1 1H9a1 1 0 01-1-1V9zM14 5a1 1 0 011-1h1a1 1 0 011 1v12a1 1 0 01-1 1h-1a1 1 0 01-1-1V5z" clipRule="evenodd" />
+    </svg>
+  );
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="currentColor">
+      <path d="M7 3a1 1 0 000 2h6a1 1 0 100-2H7zM4 7a1 1 0 011-1h10a1 1 0 110 2H5a1 1 0 01-1-1zM2 11a2 2 0 012-2h12a2 2 0 012 2v4a2 2 0 01-2 2H4a2 2 0 01-2-2v-4z" />
+    </svg>
+  );
+}
+
 // ─── Issue modal ──────────────────────────────────────────────────────────────
 
 const TIMEFRAME_OPTIONS = [
@@ -51,14 +83,58 @@ const TIMEFRAME_OPTIONS = [
   { value: "archived",   label: "Archived"   },
 ];
 
-function IssueModal({ team, users, editing, onClose, onSave, saving }) {
+function IssueModal({ team, users, teams, editing, onClose, onSave, saving }) {
   const [title, setTitle]       = useState(editing?.title || "");
   const [desc, setDesc]         = useState(editing?.description || "");
   const [assigneeId, setAssigneeId] = useState(
     editing?.assignee?.id ? String(editing.assignee.id) : ""
   );
+  const [teamId, setTeamId] = useState(String(editing?.team_id || team?.id || ""));
   const [timeframe, setTimeframe] = useState(editing?.timeframe || "short-term");
   const [priority, setPriority]   = useState(editing?.priority ?? 0);
+
+  const [selectedLinks, setSelectedLinks] = useState(
+    (editing?.links || []).map((l) => ({ linked_type: l.linked_type, linked_id: l.linked_id, title: l.title }))
+  );
+  const [linksOpen, setLinksOpen] = useState(false);
+  const [linkSearch, setLinkSearch] = useState("");
+  const [linkableItems, setLinkableItems] = useState({ objective: [], rock: [], task: [], kpi: [] });
+  const [linkableLoading, setLinkableLoading] = useState(false);
+  const linksRef = useRef(null);
+
+  useEffect(() => {
+    if (!linksOpen) return;
+    function handleOutside(e) {
+      if (linksRef.current && !linksRef.current.contains(e.target)) setLinksOpen(false);
+    }
+    document.addEventListener("mousedown", handleOutside);
+    return () => document.removeEventListener("mousedown", handleOutside);
+  }, [linksOpen]);
+
+  useEffect(() => {
+    setLinkableLoading(true);
+    Promise.all([
+      organizationApi.listObjectives().catch(() => []),
+      rockApi.list(team.id).catch(() => []),
+      taskApi.listByTeam(team.id).catch(() => []),
+      kpiApi.list(team.id).catch(() => []),
+    ]).then(([objectives, rocks, tasks, kpis]) => {
+      setLinkableItems({
+        objective: (objectives || []).map((o) => ({ id: o.id, title: o.title })),
+        rock: (rocks || []).map((r) => ({ id: r.id, title: r.title })),
+        task: (tasks || []).map((t) => ({ id: t.id, title: t.name })),
+        kpi: (kpis || []).map((k) => ({ id: k.id, title: k.title })),
+      });
+    }).finally(() => setLinkableLoading(false));
+  }, [team.id]);
+
+  function toggleLink(type, item) {
+    setSelectedLinks((prev) => {
+      const exists = prev.some((l) => l.linked_type === type && l.linked_id === item.id);
+      if (exists) return prev.filter((l) => !(l.linked_type === type && l.linked_id === item.id));
+      return [...prev, { linked_type: type, linked_id: item.id, title: item.title }];
+    });
+  }
 
   function handleSubmit(e) {
     e.preventDefault();
@@ -69,10 +145,13 @@ function IssueModal({ team, users, editing, onClose, onSave, saving }) {
       assignee_id: assigneeId ? Number(assigneeId) : null,
       timeframe,
       priority,
+      team_id: Number(teamId) || team?.id,
+      links: selectedLinks,
     });
   }
 
   const selectedAssignee = users.find((u) => String(u.id) === String(assigneeId));
+  const selectedTeam = (teams || []).find((t) => String(t.id) === String(teamId));
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/40 p-6 backdrop-blur-sm">
@@ -117,11 +196,20 @@ function IssueModal({ team, users, editing, onClose, onSave, saving }) {
               {/* Teams */}
               <div>
                 <label className="mb-1.5 block text-xs font-semibold text-slate-500">Teams</label>
-                <div className="flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2.5">
-                  <svg className="h-4 w-4 shrink-0 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
-                    <path d="M7 8a3 3 0 100-6 3 3 0 000 6zM13.5 9a2.5 2.5 0 100-5 2.5 2.5 0 000 5zM1.615 16.428a1.224 1.224 0 01-.569-1.175 6.002 6.002 0 0111.908 0c.058.467-.172.92-.57 1.174A9.953 9.953 0 017 17a9.953 9.953 0 01-5.385-1.572zM14.5 15.99a9.9 9.9 0 011.5.01v-.001a6.002 6.002 0 00-6.5-5.998 7.5 7.5 0 014.5 5.89 2.5 2.5 0 00.5.099z" />
-                  </svg>
-                  <span className="truncate text-sm text-slate-700">{team?.name || "—"}</span>
+                <div className="relative">
+                  <div className="flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2.5">
+                    <svg className="h-4 w-4 shrink-0 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
+                      <path d="M7 8a3 3 0 100-6 3 3 0 000 6zM13.5 9a2.5 2.5 0 100-5 2.5 2.5 0 000 5zM1.615 16.428a1.224 1.224 0 01-.569-1.175 6.002 6.002 0 0111.908 0c.058.467-.172.92-.57 1.174A9.953 9.953 0 017 17a9.953 9.953 0 01-5.385-1.572zM14.5 15.99a9.9 9.9 0 011.5.01v-.001a6.002 6.002 0 00-6.5-5.998 7.5 7.5 0 014.5 5.89 2.5 2.5 0 00.5.099z" />
+                    </svg>
+                    <span className="flex-1 truncate text-sm text-slate-700">{selectedTeam?.name || team?.name || "—"}</span>
+                    <svg className="h-4 w-4 shrink-0 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 011.06 0L10 11.94l3.72-3.72a.75.75 0 111.06 1.06l-4.25 4.25a.75.75 0 01-1.06 0L5.22 9.28a.75.75 0 010-1.06z" clipRule="evenodd" />
+                    </svg>
+                  </div>
+                  <select value={teamId} onChange={(e) => setTeamId(e.target.value)}
+                    className="absolute inset-0 w-full cursor-pointer opacity-0">
+                    {(teams || []).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  </select>
                 </div>
               </div>
 
@@ -200,14 +288,78 @@ function IssueModal({ team, users, editing, onClose, onSave, saving }) {
               </div>
 
               {/* Links */}
-              <div>
+              <div ref={linksRef} className="relative">
                 <label className="mb-1.5 block text-xs font-semibold text-slate-500">Links</label>
-                <div className="flex items-center justify-between rounded-xl border border-slate-200 px-3 py-2.5">
-                  <span className="text-sm text-slate-400">Select linked items</span>
-                  <svg className="h-4 w-4 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
+                <button type="button" onClick={() => setLinksOpen((v) => !v)}
+                  className="flex w-full items-center justify-between rounded-xl border border-slate-200 px-3 py-2.5 text-left hover:bg-slate-50">
+                  {selectedLinks.length > 0 ? (
+                    <span className="truncate text-sm font-medium text-slate-900">
+                      {selectedLinks.length} item{selectedLinks.length === 1 ? "" : "s"} linked
+                    </span>
+                  ) : (
+                    <span className="text-sm text-slate-400">Select linked items</span>
+                  )}
+                  <svg className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${linksOpen ? "rotate-180" : ""}`} viewBox="0 0 20 20" fill="currentColor">
                     <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 011.06 0L10 11.94l3.72-3.72a.75.75 0 111.06 1.06l-4.25 4.25a.75.75 0 01-1.06 0L5.22 9.28a.75.75 0 010-1.06z" clipRule="evenodd" />
                   </svg>
-                </div>
+                </button>
+                {selectedLinks.length > 0 && (
+                  <div className="mt-1.5 flex flex-wrap gap-1">
+                    {selectedLinks.map((link) => (
+                      <span key={`${link.linked_type}:${link.linked_id}`}
+                        className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">
+                        <LinkTypeIcon type={link.linked_type} className="h-3 w-3 text-slate-400" />
+                        <span className="max-w-[100px] truncate">{link.title}</span>
+                        <button type="button" onClick={() => toggleLink(link.linked_type, { id: link.linked_id, title: link.title })}
+                          className="ml-0.5 text-slate-400 hover:text-slate-700">×</button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {linksOpen && (
+                  <div className="absolute left-0 right-0 z-10 mt-1.5 max-h-64 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-lg">
+                    <div className="sticky top-0 border-b border-slate-100 bg-white p-2">
+                      <input autoFocus value={linkSearch} onChange={(e) => setLinkSearch(e.target.value)}
+                        placeholder="Search…"
+                        className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm outline-none focus:border-slate-400" />
+                    </div>
+                    {linkableLoading ? (
+                      <p className="px-3 py-4 text-center text-xs text-slate-400">Loading…</p>
+                    ) : (
+                      (() => {
+                        const q = linkSearch.trim().toLowerCase();
+                        const groups = ["objective", "rock", "task", "kpi"].map((type) => ({
+                          type,
+                          items: (linkableItems[type] || []).filter((item) => !q || item.title.toLowerCase().includes(q)),
+                        })).filter((g) => g.items.length > 0);
+                        return groups.length === 0 ? (
+                          <p className="px-3 py-4 text-center text-xs text-slate-400">No matching items.</p>
+                        ) : groups.map((group) => (
+                          <div key={group.type} className="py-1.5">
+                            <p className="px-3 pb-1 text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                              {LINK_TYPE_LABELS[group.type]}
+                            </p>
+                            {group.items.map((item) => {
+                              const isSelected = selectedLinks.some((l) => l.linked_type === group.type && l.linked_id === item.id);
+                              return (
+                                <button key={item.id} type="button" onClick={() => toggleLink(group.type, item)}
+                                  className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-slate-50 ${isSelected ? "bg-slate-50 font-medium text-slate-900" : "text-slate-700"}`}>
+                                  <LinkTypeIcon type={group.type} className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                                  <span className="truncate">{item.title}</span>
+                                  {isSelected && (
+                                    <svg className="ml-auto h-3.5 w-3.5 shrink-0 text-slate-900" viewBox="0 0 20 20" fill="currentColor">
+                                      <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z" clipRule="evenodd" />
+                                    </svg>
+                                  )}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        ));
+                      })()
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -330,6 +482,7 @@ const TABS = [
 export default function IssuesTab({ team, canManage }) {
   const { user } = useAuth();
   const [issues, setIssues]     = useState([]);
+  const [teams, setTeams]       = useState([]);
   const [loading, setLoading]   = useState(true);
   const [tab, setTab]           = useState("short-term");
   const [showModal, setShowModal] = useState(false);
@@ -348,6 +501,10 @@ export default function IssuesTab({ team, canManage }) {
     try {
       const data = await issueApi.list(team.id, timeframe);
       setIssues(Array.isArray(data) ? data : []);
+      try {
+        const ts = await teamApi.list();
+        if (Array.isArray(ts)) setTeams(ts);
+      } catch { /* teams optional */ }
     } catch {
       toast.error("Failed to load issues.");
     } finally {
@@ -356,19 +513,22 @@ export default function IssuesTab({ team, canManage }) {
   }
 
   async function handleSave(payload) {
+    const { team_id: targetTeamId, ...issuePayload } = payload;
+    const createTeamId = targetTeamId || team.id;
     setSaving(true);
     try {
       if (editing) {
         const updated = await issueApi.update(team.id, editing.id, payload);
         setIssues((prev) => {
+          if (updated.team_id !== team.id) return prev.filter((i) => i.id !== editing.id);
           const inCurrentTab = updated.timeframe === tab;
           if (!inCurrentTab) return prev.filter((i) => i.id !== editing.id);
           return prev.map((i) => (i.id === editing.id ? updated : i));
         });
         toast.success("Issue updated.");
       } else {
-        const created = await issueApi.create(team.id, payload);
-        if (created.timeframe === tab) {
+        const created = await issueApi.create(createTeamId, issuePayload);
+        if (created.team_id === team.id && created.timeframe === tab) {
           setIssues((prev) => [created, ...prev]);
         }
         toast.success("Issue created.");
@@ -474,6 +634,7 @@ export default function IssuesTab({ team, canManage }) {
         <IssueModal
           team={team}
           users={users}
+          teams={teams}
           editing={editing}
           onClose={() => { setShowModal(false); setEditing(null); }}
           onSave={handleSave}
