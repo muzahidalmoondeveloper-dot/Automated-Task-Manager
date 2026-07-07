@@ -30,8 +30,11 @@ class KPI(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
+    project_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
+
     owner = relationship("User", foreign_keys=[owner_id], lazy="selectin")
     rock = relationship("Rock", foreign_keys=[rock_id], lazy="selectin")
+    project = relationship("Project", foreign_keys=[project_id], lazy="selectin")
     entries = relationship(
         "KPIEntry",
         back_populates="kpi",
