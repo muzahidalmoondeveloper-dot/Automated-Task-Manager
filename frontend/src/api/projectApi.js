@@ -9,6 +9,10 @@ export const projectApi = {
     return apiClient.get(`/projects/${id}`);
   },
 
+  listItems(id) {
+    return apiClient.get(`/projects/${id}/items`);
+  },
+
   create(payload) {
     return apiClient.post("/projects", payload);
   },

@@ -14,6 +14,7 @@ import { useAuth } from "../context/AuthContext";
 import RocksTab from "./RocksTab";
 import KPIsTab from "./KPIsTab";
 import IssuesTab from "./IssuesTab";
+import MeetingsTab from "./MeetingsTab";
 import RichEditor from "../components/RichEditor";
 
 function stripHtml(html) {
@@ -1378,115 +1379,9 @@ export default function TeamDetailPage() {
         <IssuesTab team={team} canManage={canManageTasks} />
       )}
 
-      {activeTab === "meetings" ? (
-        <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="flex flex-col gap-4 border-b border-slate-200 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={goToPreviousMonth}
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50"
-              >
-                ‹
-              </button>
-
-              <button
-                type="button"
-                onClick={goToToday}
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50"
-              >
-                Today
-              </button>
-
-              <button
-                type="button"
-                onClick={goToNextMonth}
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50"
-              >
-                ›
-              </button>
-            </div>
-
-            <h2 className="text-lg font-semibold text-slate-900">
-              {calendarDate.toLocaleString("default", {
-                month: "long",
-                year: "numeric",
-              })}
-            </h2>
-          </div>
-
-          <div className="overflow-x-auto">
-            <div className="min-w-[900px]">
-              <div className="grid grid-cols-7 border-b border-slate-200 text-xs font-semibold uppercase text-slate-500">
-                {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(
-                  (day) => (
-                    <div key={day} className="border-r border-slate-200 p-3">
-                      {day}
-                    </div>
-                  )
-                )}
-              </div>
-
-              <div className="grid grid-cols-7">
-                {calendarDays.map((day) => {
-                  const dateKey = toDateInputValue(day);
-                  const dayTasks = tasksByDueDate[dateKey] || [];
-                  const isCurrentMonth =
-                    day.getMonth() === calendarDate.getMonth();
-
-                  return (
-                    <div
-                      key={dateKey}
-                      className={
-                        isCurrentMonth
-                          ? "min-h-32 border-r border-b border-slate-200 p-2"
-                          : "min-h-32 border-r border-b border-slate-200 bg-slate-50 p-2 text-slate-400"
-                      }
-                    >
-                      <div className="mb-2 flex items-center justify-between">
-                        <span className="text-sm font-semibold">
-                          {day.getDate()}
-                        </span>
-
-                        {dayTasks.length ? (
-                          <span className="rounded-full bg-slate-900 px-2 py-0.5 text-xs font-semibold text-white">
-                            {dayTasks.length}
-                          </span>
-                        ) : null}
-                      </div>
-
-                      <div className="space-y-1">
-                        {dayTasks.slice(0, 3).map((task) => (
-                          <button
-                            key={task.id}
-                            type="button"
-                            onClick={() =>
-                              quickStatusUpdate(
-                                task,
-                                task.status === "done" ? "todo" : "done"
-                              )
-                            }
-                            className="block w-full truncate rounded bg-teal-100 px-2 py-1 text-left text-xs font-medium text-teal-900"
-                            title={task.name}
-                          >
-                            {task.name}
-                          </button>
-                        ))}
-
-                        {dayTasks.length > 3 ? (
-                          <p className="text-xs text-slate-500">
-                            +{dayTasks.length - 3} more
-                          </p>
-                        ) : null}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        </section>
-      ) : null}
+      {activeTab === "meetings" && (
+        <MeetingsTab team={team} canManage={canManageTasks} />
+      )}
     </div>
   );
 }

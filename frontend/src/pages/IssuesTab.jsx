@@ -7,6 +7,7 @@ import { kpiApi } from "../api/kpiApi";
 import { taskApi } from "../api/taskApi";
 import { organizationApi } from "../api/organizationApi";
 import { teamApi } from "../api/teamApi";
+import { projectApi } from "../api/projectApi";
 import { useAuth } from "../context/AuthContext";
 import RichEditor from "../components/RichEditor";
 
@@ -83,13 +84,14 @@ const TIMEFRAME_OPTIONS = [
   { value: "archived",   label: "Archived"   },
 ];
 
-function IssueModal({ team, users, teams, editing, onClose, onSave, saving }) {
+function IssueModal({ team, users, teams, projects, editing, onClose, onSave, saving }) {
   const [title, setTitle]       = useState(editing?.title || "");
   const [desc, setDesc]         = useState(editing?.description || "");
   const [assigneeId, setAssigneeId] = useState(
     editing?.assignee?.id ? String(editing.assignee.id) : ""
   );
   const [teamId, setTeamId] = useState(String(editing?.team_id || team?.id || ""));
+  const [projectId, setProjectId] = useState(editing?.project_id ? String(editing.project_id) : "");
   const [timeframe, setTimeframe] = useState(editing?.timeframe || "short-term");
   const [priority, setPriority]   = useState(editing?.priority ?? 0);
 
@@ -143,6 +145,7 @@ function IssueModal({ team, users, teams, editing, onClose, onSave, saving }) {
       title: title.trim(),
       description: desc || null,
       assignee_id: assigneeId ? Number(assigneeId) : null,
+      project_id: projectId ? Number(projectId) : null,
       timeframe,
       priority,
       team_id: Number(teamId) || team?.id,
@@ -152,6 +155,7 @@ function IssueModal({ team, users, teams, editing, onClose, onSave, saving }) {
 
   const selectedAssignee = users.find((u) => String(u.id) === String(assigneeId));
   const selectedTeam = (teams || []).find((t) => String(t.id) === String(teamId));
+  const selectedProject = (projects || []).find((p) => String(p.id) === String(projectId));
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/40 p-6 backdrop-blur-sm">
@@ -209,6 +213,27 @@ function IssueModal({ team, users, teams, editing, onClose, onSave, saving }) {
                   <select value={teamId} onChange={(e) => setTeamId(e.target.value)}
                     className="absolute inset-0 w-full cursor-pointer opacity-0">
                     {(teams || []).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              {/* Project */}
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold text-slate-500">Project</label>
+                <div className="relative">
+                  <div className="flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2.5">
+                    <svg className="h-4 w-4 shrink-0 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
+                      <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
+                    </svg>
+                    <span className="flex-1 truncate text-sm text-slate-700">{selectedProject?.name || "No project"}</span>
+                    <svg className="h-4 w-4 shrink-0 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 011.06 0L10 11.94l3.72-3.72a.75.75 0 111.06 1.06l-4.25 4.25a.75.75 0 01-1.06 0L5.22 9.28a.75.75 0 010-1.06z" clipRule="evenodd" />
+                    </svg>
+                  </div>
+                  <select value={projectId} onChange={(e) => setProjectId(e.target.value)}
+                    className="absolute inset-0 w-full cursor-pointer opacity-0">
+                    <option value="">No project</option>
+                    {(projects || []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                   </select>
                 </div>
               </div>
@@ -483,6 +508,7 @@ export default function IssuesTab({ team, canManage }) {
   const { user } = useAuth();
   const [issues, setIssues]     = useState([]);
   const [teams, setTeams]       = useState([]);
+  const [projects, setProjects] = useState([]);
   const [loading, setLoading]   = useState(true);
   const [tab, setTab]           = useState("short-term");
   const [showModal, setShowModal] = useState(false);
@@ -505,6 +531,10 @@ export default function IssuesTab({ team, canManage }) {
         const ts = await teamApi.list();
         if (Array.isArray(ts)) setTeams(ts);
       } catch { /* teams optional */ }
+      try {
+        const ps = await projectApi.list();
+        if (Array.isArray(ps)) setProjects(ps);
+      } catch { /* projects optional */ }
     } catch {
       toast.error("Failed to load issues.");
     } finally {
@@ -635,6 +665,7 @@ export default function IssuesTab({ team, canManage }) {
           team={team}
           users={users}
           teams={teams}
+          projects={projects}
           editing={editing}
           onClose={() => { setShowModal(false); setEditing(null); }}
           onSave={handleSave}

@@ -20,3 +20,4 @@ from app.models.team_news import TeamNews, TeamNewsLink
 from app.models.rock import Rock, Milestone, RockLink
 from app.models.kpi import KPI, KPIEntry, KpiLink
 from app.models.issue import Issue, IssueLink
+from app.models.meeting import Meeting, MeetingParticipant, MeetingAgendaItem, MeetingNote, MeetingDecision, MeetingTask

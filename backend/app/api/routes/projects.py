@@ -1,11 +1,19 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi import status as http_status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth_errors import AppException, ErrorDef
+from app.core.database import get_db
 from app.core.tenant import TenantContext, get_tenant_context, require_org_admin, require_org_manager
+from app.models.issue import Issue
+from app.models.kpi import KPI
+from app.models.rock import Rock
 from app.repositories.project_repository import ProjectRepository
+from app.schemas.issue import IssueOut
+from app.schemas.kpi import KPIOut
 from app.schemas.project import ProjectCreate, ProjectRead, ProjectUpdate
-from fastapi import Depends
+from app.schemas.rock import RockOut
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
@@ -70,3 +78,44 @@ async def delete_project(
         raise AppException(_NOT_FOUND)
     await repo.delete(project)
     return None
+
+
+@router.get("/{project_id}/items")
+async def get_project_items(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+):
+    repo = ProjectRepository(db, tenant.organization_id)
+    project = await repo.get_by_id(project_id)
+    if project is None:
+        raise AppException(_NOT_FOUND)
+
+    org_id = tenant.organization_id
+
+    rocks_result = await db.execute(
+        select(Rock)
+        .where(Rock.project_id == project_id, Rock.organization_id == org_id)
+        .order_by(Rock.created_at.desc())
+    )
+    rocks = rocks_result.scalars().all()
+
+    kpis_result = await db.execute(
+        select(KPI)
+        .where(KPI.project_id == project_id, KPI.organization_id == org_id)
+        .order_by(KPI.created_at.desc())
+    )
+    kpis = kpis_result.scalars().all()
+
+    issues_result = await db.execute(
+        select(Issue)
+        .where(Issue.project_id == project_id, Issue.organization_id == org_id)
+        .order_by(Issue.priority.desc(), Issue.created_at.desc())
+    )
+    issues = issues_result.scalars().all()
+
+    return {
+        "rocks": [RockOut.model_validate(r) for r in rocks],
+        "kpis": [KPIOut.model_validate(k) for k in kpis],
+        "issues": [IssueOut.model_validate(i) for i in issues],
+    }

@@ -74,12 +74,20 @@ class RockRef(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ProjectRef(BaseModel):
+    id: int
+    name: str
+
+    model_config = {"from_attributes": True}
+
+
 class KPICreate(BaseModel):
     title: str
     description: Optional[str] = None
     icon: Optional[str] = None
     owner_id: Optional[int] = None
     rock_id: Optional[int] = None
+    project_id: Optional[int] = None
     kpi_group: Optional[str] = None
     supported_views: Optional[list] = ["weekly", "monthly", "quarterly", "yearly"]
     interpolation: Optional[str] = "latest_value"
@@ -95,6 +103,7 @@ class KPIUpdate(BaseModel):
     icon: Optional[str] = None
     owner_id: Optional[int] = None
     rock_id: Optional[int] = None
+    project_id: Optional[int] = None
     kpi_group: Optional[str] = None
     supported_views: Optional[list] = None
     interpolation: Optional[str] = None
@@ -113,6 +122,7 @@ class KPIOut(BaseModel):
     team_id: int
     owner_id: Optional[int] = None
     rock_id: Optional[int] = None
+    project_id: Optional[int] = None
     kpi_group: Optional[str] = None
     supported_views: Optional[list] = None
     interpolation: str
@@ -121,6 +131,7 @@ class KPIOut(BaseModel):
     reference_value: Optional[float] = None
     owner: Optional[OwnerRef] = None
     rock: Optional[RockRef] = None
+    project: Optional[ProjectRef] = None
     entries: list[KPIEntryOut] = []
     links: list[EntityLinkOut] = []
     created_at: datetime

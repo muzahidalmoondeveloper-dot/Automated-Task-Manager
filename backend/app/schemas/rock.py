@@ -39,6 +39,12 @@ class ObjectiveRef(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ProjectRef(BaseModel):
+    id: int
+    name: str
+    model_config = {"from_attributes": True}
+
+
 class MilestoneUpsert(BaseModel):
     id: Optional[int] = None
     title: str
@@ -66,6 +72,7 @@ class RockCreate(BaseModel):
     status: str = "backlog"
     owner_id: Optional[int] = None
     objective_id: Optional[int] = None
+    project_id: Optional[int] = None
     due_date: Optional[date] = None
     tags: Optional[list] = None
     milestones: Optional[List[MilestoneUpsert]] = None
@@ -79,6 +86,7 @@ class RockUpdate(BaseModel):
     status: Optional[str] = None
     owner_id: Optional[int] = None
     objective_id: Optional[int] = None
+    project_id: Optional[int] = None
     due_date: Optional[date] = None
     tags: Optional[list] = None
     milestones: Optional[List[MilestoneUpsert]] = None
@@ -99,8 +107,10 @@ class RockOut(BaseModel):
     team_id: int
     owner_id: Optional[int] = None
     objective_id: Optional[int] = None
+    project_id: Optional[int] = None
     owner: Optional[UserRef] = None
     objective: Optional[ObjectiveRef] = None
+    project: Optional[ProjectRef] = None
     milestones: List[MilestoneOut] = []
     links: List[EntityLinkOut] = []
     created_at: datetime

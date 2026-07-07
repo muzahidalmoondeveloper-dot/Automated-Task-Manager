@@ -18,7 +18,9 @@ from app.api.routes import team_news
 from app.api.routes import rocks
 from app.api.routes import kpi
 from app.api.routes import issues
+from app.api.routes import meetings
 import app.models.issue  # noqa: F401  — register Issue
+import app.models.meeting  # noqa: F401  — register Meeting models
 import app.models.chat  # noqa: F401  — register models for auto table creation
 import app.models.email_notification_log  # noqa: F401  — register EmailNotificationLog
 import app.models.org_value  # noqa: F401  — register OrgValue
@@ -70,6 +72,15 @@ async def lifespan(app: FastAPI):
         await conn.execute(text(
             "ALTER TABLE kpi_entries ALTER COLUMN value DROP NOT NULL"
         ))
+        await conn.execute(text(
+            "ALTER TABLE rocks ADD COLUMN IF NOT EXISTS project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE kpis ADD COLUMN IF NOT EXISTS project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE issues ADD COLUMN IF NOT EXISTS project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL"
+        ))
 
     await seed_admin()
 
@@ -120,6 +131,7 @@ app.include_router(team_news.router, prefix=settings.API_PREFIX)
 app.include_router(rocks.router, prefix=settings.API_PREFIX)
 app.include_router(kpi.router, prefix=settings.API_PREFIX)
 app.include_router(issues.router, prefix=settings.API_PREFIX)
+app.include_router(meetings.router, prefix=settings.API_PREFIX)
 app.include_router(organizations.router, prefix=settings.API_PREFIX)
 
 @app.get("/health")

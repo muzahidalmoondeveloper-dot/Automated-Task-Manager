@@ -34,10 +34,18 @@ class AssigneeRef(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ProjectRef(BaseModel):
+    id: int
+    name: str
+
+    model_config = {"from_attributes": True}
+
+
 class IssueCreate(BaseModel):
     title: str
     description: Optional[str] = None
     assignee_id: Optional[int] = None
+    project_id: Optional[int] = None
     timeframe: Optional[str] = "short-term"
     priority: Optional[int] = 0
     links: list[EntityLinkIn] = []
@@ -47,6 +55,7 @@ class IssueUpdate(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
     assignee_id: Optional[int] = None
+    project_id: Optional[int] = None
     timeframe: Optional[str] = None
     priority: Optional[int] = None
     team_id: Optional[int] = None
@@ -59,9 +68,11 @@ class IssueOut(BaseModel):
     description: Optional[str] = None
     team_id: int
     assignee_id: Optional[int] = None
+    project_id: Optional[int] = None
     timeframe: str
     priority: int
     assignee: Optional[AssigneeRef] = None
+    project: Optional[ProjectRef] = None
     links: list[EntityLinkOut] = []
     created_at: datetime
     updated_at: datetime
