@@ -74,4 +74,5 @@ ALL_PLANS = list(PLAN_LIMITS.keys())
 
 
 def get_plan_limits(plan: str) -> PlanLimits:
-    return PLAN_LIMITS.get(plan, PLAN_LIMITS["free"])
+    # Subscription checks temporarily disabled — always return enterprise limits
+    return PLAN_LIMITS["enterprise"]

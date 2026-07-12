@@ -27,7 +27,7 @@ async def send_message(
     enforce_feature(tenant, "has_ai_features")
     if not payload.message or not payload.message.strip():
         raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail="Message cannot be empty.")
-    service = ChatService(db)
+    service = ChatService(db, tenant.organization_id)
     return await service.handle_message(user=tenant.user, message=payload.message.strip(), session_id=payload.session_id, org_role=tenant.org_role)
 
 
@@ -53,7 +53,7 @@ async def upload_file_message(
         raise HTTPException(status_code=http_status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"Could not extract text: {exc}")
-    service = ChatService(db)
+    service = ChatService(db, tenant.organization_id)
     return await service.handle_message(user=tenant.user, message=message.strip(), session_id=session_id, org_role=tenant.org_role, file_context={"filename": file.filename, "text": file_text, "size_bytes": len(content)})
 
 
