@@ -10,6 +10,7 @@ import { teamApi } from "../api/teamApi";
 import { projectApi } from "../api/projectApi";
 import { apiClient } from "../api/client";
 import { useAuth } from "../context/AuthContext";
+import KPIReportModal from "../components/KPIReportModal";
 
 // ─── Avatar helpers ────────────────────────────────────────────────────────────
 
@@ -979,6 +980,7 @@ export default function KPIsTab({ team, canManage }) {
   const [recordModal, setRecordModal] = useState(null); // { kpi, period, entry }
   const [dragIdx, setDragIdx] = useState(null);
   const [overIdx, setOverIdx] = useState(null);
+  const [showReport, setShowReport] = useState(false);
 
   const users = team?.members || [];
 
@@ -1113,15 +1115,24 @@ export default function KPIsTab({ team, canManage }) {
             </svg>
           </button>
         </div>
-        {canManage && (
-          <button type="button" onClick={() => { setEditing(null); setShowModal(true); }}
+        <div className="flex items-center gap-2">
+          <button type="button" onClick={() => setShowReport(true)}
             className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50">
-            <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-              <path d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z" />
+            <svg className="h-4 w-4 text-teal-600" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clipRule="evenodd" />
             </svg>
-            New KPI
+            Download Report
           </button>
-        )}
+          {canManage && (
+            <button type="button" onClick={() => { setEditing(null); setShowModal(true); }}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50">
+              <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                <path d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z" />
+              </svg>
+              New KPI
+            </button>
+          )}
+        </div>
       </div>
 
       {/* View tabs + Owner filter */}
@@ -1236,6 +1247,10 @@ export default function KPIsTab({ team, canManage }) {
             setRecordModal((prev) => prev ? { ...prev, entry } : null);
           }}
         />
+      )}
+
+      {showReport && (
+        <KPIReportModal kpis={kpis} team={team} onClose={() => setShowReport(false)} />
       )}
     </div>
   );
