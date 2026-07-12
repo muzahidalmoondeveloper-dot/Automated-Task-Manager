@@ -250,13 +250,13 @@ def _parse_json_safe(text: str) -> dict:
 
 
 class ChatService:
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession, org_id):
         self._db = db
-        self._chat_repo = ChatRepository(db)
-        self._task_repo = TaskRepository(db)
+        self._chat_repo = ChatRepository(db, org_id)
+        self._task_repo = TaskRepository(db, org_id)
         self._user_repo = UserRepository(db)
-        self._project_repo = ProjectRepository(db)
-        self._team_repo = TeamRepository(db)
+        self._project_repo = ProjectRepository(db, org_id)
+        self._team_repo = TeamRepository(db, org_id)
         self._llm = get_llm_provider()
         # Per-request caches — populated on first access, reused within the same message.
         self._users_cache: list | None = None
