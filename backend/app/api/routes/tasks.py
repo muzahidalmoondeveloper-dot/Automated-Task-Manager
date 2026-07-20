@@ -192,7 +192,9 @@ async def list_tasks_by_team(
     tasks = await task_repo.list_by_team(team_id)
     if tenant.is_admin_or_owner:
         return [serialize_task(t) for t in tasks]
-    return [serialize_task(t) for t in tasks if t.assignee_id == tenant.user.id]
+    # Team members see their own tasks plus unassigned team To-Dos — tasks are
+    # created without an assignee and must be visible to the whole team.
+    return [serialize_task(t) for t in tasks if t.assignee_id == tenant.user.id or t.assignee_id is None]
 
 
 # ── Get / update / delete single task ────────────────────────────────────────

@@ -2,16 +2,22 @@ from fastapi import APIRouter, Depends
 from fastapi import status as http_status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
+from app.api.routes.teams import _serialize as serialize_team
 from app.core.auth_errors import AppException, ErrorDef
 from app.core.database import get_db
 from app.core.tenant import TenantContext, get_tenant_context, require_org_admin, require_org_manager
 from app.models.issue import Issue
 from app.models.kpi import KPI
+from app.models.objective import Objective
 from app.models.rock import Rock
+from app.models.task import Task
 from app.repositories.project_repository import ProjectRepository
+from app.repositories.team_repository import TeamRepository
 from app.schemas.issue import IssueOut
 from app.schemas.kpi import KPIOut
+from app.schemas.org import ObjectiveRead
 from app.schemas.project import ProjectCreate, ProjectRead, ProjectUpdate
 from app.schemas.rock import RockOut
 
@@ -114,8 +120,57 @@ async def get_project_items(
     )
     issues = issues_result.scalars().all()
 
+    # ── Objectives of this project, plus the Rocks under them and the KPIs
+    #    tracking those Rocks (additive keys — existing keys are unchanged). ──
+    objectives_result = await db.execute(
+        select(Objective)
+        .where(Objective.project_id == project_id, Objective.organization_id == org_id)
+        .options(selectinload(Objective.owner), selectinload(Objective.project))
+        .order_by(Objective.created_at.desc())
+    )
+    objectives = objectives_result.scalars().all()
+
+    objective_ids = [o.id for o in objectives]
+    objective_rocks = []
+    if objective_ids:
+        objective_rocks_result = await db.execute(
+            select(Rock)
+            .where(Rock.objective_id.in_(objective_ids), Rock.organization_id == org_id)
+            .order_by(Rock.created_at.desc())
+        )
+        objective_rocks = objective_rocks_result.scalars().all()
+
+    # KPIs tracking any rock shown on this page (project rocks + objective rocks).
+    all_rock_ids = {r.id for r in rocks} | {r.id for r in objective_rocks}
+    rock_kpis = []
+    if all_rock_ids:
+        rock_kpis_result = await db.execute(
+            select(KPI)
+            .where(KPI.rock_id.in_(all_rock_ids), KPI.organization_id == org_id)
+            .order_by(KPI.created_at.desc())
+        )
+        rock_kpis = rock_kpis_result.scalars().all()
+
+    # Teams involved in this project: via its rocks, KPIs, and tasks.
+    tasks_result = await db.execute(
+        select(Task.team_id).where(Task.project_id == project_id, Task.organization_id == org_id)
+    )
+    team_ids = (
+        {r.team_id for r in rocks}
+        | {r.team_id for r in objective_rocks}
+        | {k.team_id for k in kpis}
+        | {k.team_id for k in rock_kpis}
+        | {row[0] for row in tasks_result.all() if row[0] is not None}
+    )
+    team_repo = TeamRepository(db, org_id)
+    project_teams = [t for t in await team_repo.list_all() if t.id in team_ids]
+
     return {
         "rocks": [RockOut.model_validate(r) for r in rocks],
         "kpis": [KPIOut.model_validate(k) for k in kpis],
         "issues": [IssueOut.model_validate(i) for i in issues],
+        "objectives": [ObjectiveRead.model_validate(o) for o in objectives],
+        "objective_rocks": [RockOut.model_validate(r) for r in objective_rocks],
+        "rock_kpis": [KPIOut.model_validate(k) for k in rock_kpis],
+        "teams": [serialize_team(t) for t in project_teams],
     }

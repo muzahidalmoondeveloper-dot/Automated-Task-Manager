@@ -97,6 +97,10 @@ export default function ProjectDetailPage() {
   const [rocks, setRocks] = useState([]);
   const [kpis, setKpis] = useState([]);
   const [issues, setIssues] = useState([]);
+  const [objectives, setObjectives] = useState([]);
+  const [objectiveRocks, setObjectiveRocks] = useState([]);
+  const [rockKpis, setRockKpis] = useState([]);
+  const [projectTeams, setProjectTeams] = useState([]);
 
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -149,6 +153,20 @@ export default function ProjectDetailPage() {
     return getMonthMatrix(calendarDate.getFullYear(), calendarDate.getMonth());
   }, [calendarDate]);
 
+  // Project rocks + rocks under the project's objectives, deduped by id.
+  const allProjectRocks = useMemo(() => {
+    const map = new Map();
+    [...rocks, ...objectiveRocks].forEach((r) => map.set(r.id, r));
+    return Array.from(map.values());
+  }, [rocks, objectiveRocks]);
+
+  // Project KPIs + KPIs tracking any of the rocks above, deduped by id.
+  const allProjectKpis = useMemo(() => {
+    const map = new Map();
+    [...kpis, ...rockKpis].forEach((k) => map.set(k.id, k));
+    return Array.from(map.values());
+  }, [kpis, rockKpis]);
+
   const doneTaskCount = useMemo(() => {
     return tasks.filter((task) => task.status === "done").length;
   }, [tasks]);
@@ -184,6 +202,10 @@ export default function ProjectDetailPage() {
       setRocks(result[2]?.rocks || []);
       setKpis(result[2]?.kpis || []);
       setIssues(result[2]?.issues || []);
+      setObjectives(result[2]?.objectives || []);
+      setObjectiveRocks(result[2]?.objective_rocks || []);
+      setRockKpis(result[2]?.rock_kpis || []);
+      setProjectTeams(result[2]?.teams || []);
 
       if (canManageTasks) {
         setUsers(result[3]);
@@ -365,6 +387,16 @@ export default function ProjectDetailPage() {
       archived:  { dot: "bg-slate-300",   badge: "bg-slate-100 text-slate-500",   label: "Archived" },
     };
     return map[status] || map.backlog;
+  }
+
+  function getObjectiveStatusCfg(status) {
+    const map = {
+      active:    { label: "Active",    badge: "bg-blue-100 text-blue-700" },
+      completed: { label: "Completed", badge: "bg-emerald-100 text-emerald-700" },
+      paused:    { label: "Paused",    badge: "bg-amber-100 text-amber-700" },
+      cancelled: { label: "Cancelled", badge: "bg-red-100 text-red-700" },
+    };
+    return map[status] || map.active;
   }
 
   function getIssuePriorityCfg(priority) {
@@ -591,6 +623,156 @@ export default function ProjectDetailPage() {
                 </div>
               </div>
             )}
+
+            {/* ── Teams ── */}
+            <div>
+              <div className="mb-4 flex items-center gap-3">
+                <h2 className="text-lg font-semibold text-slate-900">Teams</h2>
+                <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-semibold text-indigo-700">
+                  {projectTeams.length}
+                </span>
+              </div>
+
+              {projectTeams.length === 0 ? (
+                <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 py-10 text-center">
+                  <svg className="mb-3 h-8 w-8 text-slate-300" viewBox="0 0 20 20" fill="currentColor">
+                    <path d="M7 8a3 3 0 100-6 3 3 0 000 6zM13.5 9a2.5 2.5 0 100-5 2.5 2.5 0 000 5z" />
+                    <path d="M2.5 15.5A4.5 4.5 0 017 11h.25a4.5 4.5 0 014.5 4.5.5.5 0 01-.5.5H3a.5.5 0 01-.5-.5zM14 16h3.5a.5.5 0 00.5-.5 3.5 3.5 0 00-5.437-2.917A5.98 5.98 0 0114 16z" />
+                  </svg>
+                  <p className="text-sm font-medium text-slate-500">No teams are working on this project yet.</p>
+                  <p className="mt-1 text-xs text-slate-400">Teams appear here once their Rocks, KPIs, or tasks are linked to this project.</p>
+                </div>
+              ) : (
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {projectTeams.map((team) => (
+                    <div key={team.id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:shadow-md">
+                      <div className="mb-3 flex items-start justify-between gap-2">
+                        <h3 className="text-sm font-semibold text-slate-900">{team.name}</h3>
+                        <span className="shrink-0 rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-600">
+                          {team.members?.length || 0} member{(team.members?.length || 0) === 1 ? "" : "s"}
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {(team.members || []).map((member) => (
+                          <span key={member.id}
+                            className="flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">
+                            <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-indigo-500 text-[9px] font-bold text-white">
+                              {(member.full_name || member.email || "?").charAt(0).toUpperCase()}
+                            </span>
+                            {member.full_name || member.email}
+                          </span>
+                        ))}
+                        {(team.members || []).length === 0 && (
+                          <span className="text-xs italic text-slate-400">No members assigned</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* ── Objectives → Rocks → KPIs ── */}
+            <div>
+              <div className="mb-4 flex items-center gap-3">
+                <h2 className="text-lg font-semibold text-slate-900">Objectives</h2>
+                <span className="rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-semibold text-blue-700">
+                  {objectives.length}
+                </span>
+              </div>
+
+              {objectives.length === 0 ? (
+                <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 py-10 text-center">
+                  <svg className="mb-3 h-8 w-8 text-slate-300" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm0-2a6 6 0 100-12 6 6 0 000 12zm0-2a4 4 0 100-8 4 4 0 000 8zm0-2a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
+                  </svg>
+                  <p className="text-sm font-medium text-slate-500">No objectives linked to this project.</p>
+                  <p className="mt-1 text-xs text-slate-400">Link an objective to this project from Organization → Objectives.</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {objectives.map((objective) => {
+                    const objCfg = getObjectiveStatusCfg(objective.status);
+                    const objRocks = allProjectRocks.filter((r) => r.objective_id === objective.id);
+                    return (
+                      <div key={objective.id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                        {/* Objective header */}
+                        <div className="flex flex-wrap items-center gap-2">
+                          <svg className="h-4 w-4 shrink-0 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
+                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm0-2a6 6 0 100-12 6 6 0 000 12zm0-2a4 4 0 100-8 4 4 0 000 8zm0-2a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
+                          </svg>
+                          <h3 className="text-sm font-semibold text-slate-900">{objective.title}</h3>
+                          <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${objCfg.badge}`}>{objCfg.label}</span>
+                          <span className="ml-auto flex items-center gap-3 text-xs text-slate-500">
+                            {objective.owner && (
+                              <span className="flex items-center gap-1">
+                                <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-slate-200 text-[10px] font-bold text-slate-600">
+                                  {objective.owner.full_name?.charAt(0) || "?"}
+                                </span>
+                                {objective.owner.full_name}
+                              </span>
+                            )}
+                            {objective.due_date && <span>{formatDate(objective.due_date)}</span>}
+                          </span>
+                        </div>
+
+                        {/* Rocks under this objective */}
+                        {objRocks.length === 0 ? (
+                          <p className="mt-3 pl-6 text-xs italic text-slate-400">No Rocks linked to this objective.</p>
+                        ) : (
+                          <div className="mt-3 space-y-2 pl-6">
+                            {objRocks.map((rock) => {
+                              const rockCfg = getRockStatusCfg(rock.status);
+                              const trackingKpis = allProjectKpis.filter((k) => k.rock_id === rock.id);
+                              return (
+                                <div key={rock.id} className="rounded-xl border border-slate-100 bg-slate-50/60 p-3">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <svg className="h-3.5 w-3.5 shrink-0 text-purple-500" viewBox="0 0 20 20" fill="currentColor">
+                                      <path d="M10 2L3 7l2.5 11h9L17 7l-7-5z" />
+                                    </svg>
+                                    <span className="text-sm font-medium text-slate-800">{rock.title}</span>
+                                    <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium capitalize ${rockCfg.badge}`}>
+                                      {rockCfg.label}
+                                    </span>
+                                    <span className="ml-auto text-xs text-slate-400">
+                                      {rock.owner ? rock.owner.full_name : "No owner"}
+                                    </span>
+                                  </div>
+                                  {/* KPIs tracking this Rock */}
+                                  {trackingKpis.length === 0 ? (
+                                    <p className="mt-2 pl-5 text-xs italic text-slate-400">No KPIs tracking this Rock.</p>
+                                  ) : (
+                                    <div className="mt-2 space-y-1 pl-5">
+                                      {trackingKpis.map((kpi) => {
+                                        const latest = getKpiLatestValue(kpi);
+                                        return (
+                                          <div key={kpi.id} className="flex flex-wrap items-center gap-2 text-xs">
+                                            <svg className="h-3 w-3 shrink-0 text-teal-600" viewBox="0 0 20 20" fill="currentColor">
+                                              <path d="M2 11a1 1 0 011-1h2a1 1 0 011 1v5a1 1 0 01-1 1H3a1 1 0 01-1-1v-5zM8 7a1 1 0 011-1h2a1 1 0 011 1v9a1 1 0 01-1 1H9a1 1 0 01-1-1V7zM14 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1h-2a1 1 0 01-1-1V4z" />
+                                            </svg>
+                                            <span className="font-medium text-slate-700">{kpi.title}</span>
+                                            <span className="text-slate-400">
+                                              Latest: {latest !== null && latest !== undefined ? latest.toLocaleString() : "—"}
+                                              {kpi.reference_value !== null && kpi.reference_value !== undefined
+                                                ? ` · Target: ${kpi.reference_value.toLocaleString()}`
+                                                : ""}
+                                            </span>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
 
             {/* ── Rocks ── */}
             <div>

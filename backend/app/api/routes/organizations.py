@@ -123,7 +123,7 @@ async def _issue_org_token_pair(
         subject=str(user.id),
         extra_claims={"email": user.email, "org_id": str(org_id), "org_role": org_role},
     )
-    refresh_str, refresh_hash, refresh_exp = create_refresh_token(subject=str(user.id))
+    refresh_str, refresh_hash, refresh_exp = create_refresh_token(subject=str(user.id), org_id=org_id, org_role=org_role)
     token_repo = RefreshTokenRepository(db)
     await token_repo.save(
         token_hash=refresh_hash,

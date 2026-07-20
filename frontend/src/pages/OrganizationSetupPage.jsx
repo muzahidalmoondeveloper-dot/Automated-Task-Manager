@@ -172,7 +172,7 @@ export default function OrganizationSetupPage() {
           slug: resolvedSlug,
         });
         await apiClient.put(`/organizations/${data.organization.id}/setup`, details);
-        loginWithToken(data.access_token, data.user, "active");
+        loginWithToken(data.access_token, data.user, "active", data.refresh_token);
         setOrgId(data.organization.id);
       }
 

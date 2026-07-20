@@ -40,7 +40,7 @@ export default function AcceptInvitationPage() {
     try {
       setAccepting(true);
       const response = await invitationApi.accept(token);
-      loginWithToken(response.access_token, response.user);
+      loginWithToken(response.access_token, response.user, null, response.refresh_token);
       toast.success(`You've joined ${preview?.organization_name || "the organization"}!`);
       navigate("/dashboard", { replace: true });
     } catch (err) {

@@ -31,4 +31,18 @@ export const kpiApi = {
   reorder(teamId, items) {
     return apiClient.put(`/teams/${teamId}/kpis/reorder`, items);
   },
+
+  // ── KPI groups ──────────────────────────────────────────────────────────
+  listGroups(teamId) {
+    return apiClient.get(`/teams/${teamId}/kpi-groups`);
+  },
+  createGroup(teamId, data) {
+    return apiClient.post(`/teams/${teamId}/kpi-groups`, data);
+  },
+  updateGroup(teamId, groupId, data) {
+    return apiClient.patch(`/teams/${teamId}/kpi-groups/${groupId}`, data);
+  },
+  deleteGroup(teamId, groupId) {
+    return apiClient.delete(`/teams/${teamId}/kpi-groups/${groupId}`);
+  },
 };

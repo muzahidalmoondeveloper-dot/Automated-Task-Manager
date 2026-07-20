@@ -1,4 +1,4 @@
-import {
+﻿import {
   createContext,
   useCallback,
   useContext,
@@ -11,7 +11,9 @@ import { authApi } from "../api/authApi";
 import {
   getAccessToken,
   removeAccessToken,
+  removeRefreshToken,
   setAccessToken,
+  setRefreshToken,
 } from "../api/client";
 
 const AuthContext = createContext(null);
@@ -53,6 +55,7 @@ export function AuthProvider({ children }) {
       setOrgStatus(data.org_status ?? null);
     } catch (error) {
       removeAccessToken();
+      removeRefreshToken();
       setUser(null);
       setOrgStatus(null);
       setAuthError(error.message || "Session expired.");
@@ -65,8 +68,9 @@ export function AuthProvider({ children }) {
     loadCurrentUser();
   }, [loadCurrentUser]);
 
-  function loginWithToken(accessToken, authenticatedUser, status = null) {
+  function loginWithToken(accessToken, authenticatedUser, status = null, refreshToken = null) {
     setAccessToken(accessToken);
+    if (refreshToken) setRefreshToken(refreshToken);
     setUser(authenticatedUser);
     setOrgStatus(status);
     setAuthError("");
@@ -80,7 +84,7 @@ export function AuthProvider({ children }) {
   async function verifyRegisterOtp(payload) {
     setAuthError("");
     const data = await authApi.verifyRegisterOtp(payload);
-    loginWithToken(data.access_token, data.user, data.org_status);
+    loginWithToken(data.access_token, data.user, data.org_status, data.refresh_token);
     return data;
   }
 
@@ -103,7 +107,7 @@ export function AuthProvider({ children }) {
     }
 
     if (data.access_token && data.user) {
-      loginWithToken(data.access_token, data.user, data.org_status);
+      loginWithToken(data.access_token, data.user, data.org_status, data.refresh_token);
     }
 
     return data;
@@ -117,7 +121,7 @@ export function AuthProvider({ children }) {
       return data;
     }
 
-    loginWithToken(data.access_token, data.user, data.org_status);
+    loginWithToken(data.access_token, data.user, data.org_status, data.refresh_token);
     return data;
   }
 
@@ -125,15 +129,28 @@ export function AuthProvider({ children }) {
   async function selectOrganization(orgId) {
     setAuthError("");
     const data = await authApi.selectOrganization(orgId);
-    loginWithToken(data.access_token, data.user, data.org_status);
+    loginWithToken(data.access_token, data.user, data.org_status, data.refresh_token);
     return data;
   }
 
   function logout() {
     removeAccessToken();
+    removeRefreshToken();
     setUser(null);
     setOrgStatus(null);
   }
+
+  // Fired by the API client when a token refresh fails — the session is
+  // unrecoverable, so reset auth state to route the user back to login.
+  useEffect(() => {
+    function handleSessionExpired() {
+      setUser(null);
+      setOrgStatus(null);
+      setAuthError("Session expired. Please log in again.");
+    }
+    window.addEventListener("auth:session-expired", handleSessionExpired);
+    return () => window.removeEventListener("auth:session-expired", handleSessionExpired);
+  }, []);
 
   // Derive org context from the stored JWT without an extra network call.
   const token = getAccessToken();

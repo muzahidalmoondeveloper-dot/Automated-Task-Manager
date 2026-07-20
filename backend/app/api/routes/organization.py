@@ -4,10 +4,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
-from app.core.tenant import TenantContext, get_tenant_context, require_org_admin
+from app.core.tenant import TenantContext, get_tenant_context, require_org_admin, require_org_manager
 from app.models.objective import Objective
 from app.models.org_role import OrgRole
 from app.models.org_value import OrgValue
+from app.models.project import Project
 from app.models.rock import Rock
 from app.models.user import User
 from app.schemas.org import (
@@ -68,9 +69,17 @@ async def delete_value(value_id: int, tenant: TenantContext = Depends(require_or
 
 # ─── Objectives ───────────────────────────────────────────────────────────────
 
+async def _validate_project_id(project_id: int | None, tenant: TenantContext, db: AsyncSession) -> None:
+    if project_id is None:
+        return
+    result = await db.execute(select(Project.id).where(Project.id == project_id, Project.organization_id == tenant.organization_id))
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+
+
 @router.get("/objectives", response_model=list[ObjectiveRead])
 async def list_objectives(tenant: TenantContext = Depends(get_tenant_context), db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Objective).where(Objective.organization_id == tenant.organization_id).options(selectinload(Objective.owner)).order_by(Objective.created_at.desc()))
+    result = await db.execute(select(Objective).where(Objective.organization_id == tenant.organization_id).options(selectinload(Objective.owner), selectinload(Objective.project)).order_by(Objective.created_at.desc()))
     return result.scalars().all()
 
 
@@ -81,29 +90,33 @@ async def list_objective_rocks(tenant: TenantContext = Depends(get_tenant_contex
 
 
 @router.post("/objectives", response_model=ObjectiveRead, status_code=status.HTTP_201_CREATED)
-async def create_objective(payload: ObjectiveCreate, tenant: TenantContext = Depends(require_org_admin), db: AsyncSession = Depends(get_db)):
+async def create_objective(payload: ObjectiveCreate, tenant: TenantContext = Depends(require_org_manager), db: AsyncSession = Depends(get_db)):
+    await _validate_project_id(payload.project_id, tenant, db)
     obj = Objective(**payload.model_dump(), created_by_id=tenant.user.id, organization_id=tenant.organization_id)
     db.add(obj)
     await db.commit()
-    result = await db.execute(select(Objective).where(Objective.id == obj.id).options(selectinload(Objective.owner)))
+    result = await db.execute(select(Objective).where(Objective.id == obj.id).options(selectinload(Objective.owner), selectinload(Objective.project)))
     return result.scalar_one()
 
 
 @router.patch("/objectives/{obj_id}", response_model=ObjectiveRead)
-async def update_objective(obj_id: int, payload: ObjectiveUpdate, tenant: TenantContext = Depends(require_org_admin), db: AsyncSession = Depends(get_db)):
+async def update_objective(obj_id: int, payload: ObjectiveUpdate, tenant: TenantContext = Depends(require_org_manager), db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Objective).where(Objective.id == obj_id, Objective.organization_id == tenant.organization_id).options(selectinload(Objective.owner)))
     obj = result.scalar_one_or_none()
     if not obj:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Objective not found.")
-    for key, val in payload.model_dump(exclude_unset=True).items():
+    updates = payload.model_dump(exclude_unset=True)
+    if "project_id" in updates:
+        await _validate_project_id(updates["project_id"], tenant, db)
+    for key, val in updates.items():
         setattr(obj, key, val)
     await db.commit()
-    result2 = await db.execute(select(Objective).where(Objective.id == obj_id).options(selectinload(Objective.owner)))
+    result2 = await db.execute(select(Objective).where(Objective.id == obj_id).options(selectinload(Objective.owner), selectinload(Objective.project)))
     return result2.scalar_one()
 
 
 @router.delete("/objectives/{obj_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_objective(obj_id: int, tenant: TenantContext = Depends(require_org_admin), db: AsyncSession = Depends(get_db)):
+async def delete_objective(obj_id: int, tenant: TenantContext = Depends(require_org_manager), db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Objective).where(Objective.id == obj_id, Objective.organization_id == tenant.organization_id))
     obj = result.scalar_one_or_none()
     if not obj:

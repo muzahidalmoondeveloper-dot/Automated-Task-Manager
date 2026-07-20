@@ -93,7 +93,7 @@ async def _issue_token_pair(
         org_id=org_id,
         org_role=org_role,
     )
-    refresh_str, refresh_hash, refresh_exp = create_refresh_token(subject=str(user.id))
+    refresh_str, refresh_hash, refresh_exp = create_refresh_token(subject=str(user.id), org_id=org_id, org_role=org_role)
 
     token_repo = RefreshTokenRepository(db)
     await token_repo.save(
@@ -631,7 +631,7 @@ async def refresh_access_token(
         org_id=org_id,
         org_role=org_role,
     )
-    new_refresh_str, new_hash, new_exp = create_refresh_token(subject=str(user.id))
+    new_refresh_str, new_hash, new_exp = create_refresh_token(subject=str(user.id), org_id=org_id, org_role=org_role)
     await token_repo.save(
         token_hash=new_hash,
         user_id=user.id,

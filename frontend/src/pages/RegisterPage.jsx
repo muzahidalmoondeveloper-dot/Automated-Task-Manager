@@ -309,7 +309,7 @@ export default function RegisterPage() {
         email: formData.email.trim().toLowerCase(),
         otp_code: otpCode,
       });
-      loginWithToken(res.access_token, res.user);
+      loginWithToken(res.access_token, res.user, null, res.refresh_token);
       toast.success("Account verified successfully.");
       navigate(inviteToken
         ? `/accept-invitation?token=${encodeURIComponent(inviteToken)}`

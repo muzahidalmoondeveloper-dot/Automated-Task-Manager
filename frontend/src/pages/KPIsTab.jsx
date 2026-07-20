@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import DOMPurify from "dompurify";
 import RichEditor from "../components/RichEditor";
 import toast from "react-hot-toast";
@@ -10,7 +10,6 @@ import { teamApi } from "../api/teamApi";
 import { projectApi } from "../api/projectApi";
 import { apiClient } from "../api/client";
 import { useAuth } from "../context/AuthContext";
-import KPIReportModal from "../components/KPIReportModal";
 
 // ─── Avatar helpers ────────────────────────────────────────────────────────────
 
@@ -35,9 +34,35 @@ function timeAgo(iso) {
 
 // ─── Period helpers ────────────────────────────────────────────────────────────
 
+// Format a Date as YYYY-MM-DD in *local* time. Never use toISOString() here:
+// it converts to UTC, which shifts local midnight into the previous day for
+// timezones ahead of UTC and produces wrong period keys.
 function isoDate(d) {
-  return d.toISOString().slice(0, 10);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
+
+// ─── Target-type helpers ──────────────────────────────────────────────────────
+
+function formatKpiValue(value, targetType) {
+  if (value == null) return null;
+  if (targetType === "boolean") return value >= 1 ? "Yes" : "No";
+  const rounded = Number.isInteger(value) ? value : Math.round(value * 100) / 100;
+  if (targetType === "currency") return `$${rounded.toLocaleString("en-US")}`;
+  if (targetType === "percentage") return `${rounded}%`;
+  if (targetType === "time") return `${rounded}m`;
+  return String(rounded);
+}
+
+const STATUS_STYLES = {
+  no_data:   { border: "border-slate-300",  text: "text-slate-400",  label: "No data"   },
+  on_track:  { border: "border-green-500",  text: "text-green-600",  label: "On track"  },
+  at_risk:   { border: "border-amber-500",  text: "text-amber-600",  label: "At risk"   },
+  off_track: { border: "border-red-500",    text: "text-red-600",    label: "Off track" },
+  snoozed:   { border: "border-slate-300",  text: "text-slate-400",  label: "Snoozed"   },
+};
 
 function getMonday(d) {
   const dt = new Date(d);
@@ -116,18 +141,23 @@ function nextPeriodLabel(view) {
 
 // ─── Trend SVG chart ──────────────────────────────────────────────────────────
 
-function TrendChart({ entries }) {
-  if (!entries || entries.length === 0) {
-    return <p className="py-12 text-center text-sm text-slate-400">No data yet.</p>;
+function TrendChart({ entries, view, targetType }) {
+  // Only chart manually recorded entries of the selected view — interpolated
+  // values are display-only and would make the trend misleading.
+  const relevant = (entries || []).filter(
+    (e) => e.period_type === view && (e.value != null || e.forecast != null)
+  );
+  if (relevant.length === 0) {
+    return <p className="py-12 text-center text-sm text-slate-400">No {view} data yet.</p>;
   }
 
-  const sorted = [...entries].sort((a, b) => a.period_start.localeCompare(b.period_start));
-  const values = sorted.map((e) => e.value);
-  const minVal = Math.min(...values);
-  const maxVal = Math.max(...values);
+  const sorted = [...relevant].sort((a, b) => a.period_start.localeCompare(b.period_start));
+  const nums = sorted.flatMap((e) => [e.value, e.forecast].filter((v) => v != null));
+  const minVal = Math.min(...nums);
+  const maxVal = Math.max(...nums);
   const range = maxVal - minVal || 1;
 
-  const W = 460, H = 180, PAD = { top: 16, right: 20, bottom: 32, left: 48 };
+  const W = 460, H = 190, PAD = { top: 16, right: 20, bottom: 44, left: 52 };
   const chartW = W - PAD.left - PAD.right;
   const chartH = H - PAD.top - PAD.bottom;
 
@@ -136,39 +166,63 @@ function TrendChart({ entries }) {
   function px(i) { return PAD.left + (sorted.length > 1 ? i * xStep : chartW / 2); }
   function py(v) { return PAD.top + chartH - ((v - minVal) / range) * chartH; }
 
-  const yTicks = 5;
-  const yLabels = Array.from({ length: yTicks }, (_, i) => {
-    const v = minVal + (range * i) / (yTicks - 1);
-    return Math.round(v);
-  });
+  function tickLabel(v) {
+    const rounded = Math.round(v * 100) / 100;
+    if (targetType === "currency") return `$${rounded}`;
+    if (targetType === "percentage") return `${rounded}%`;
+    if (targetType === "time") return `${rounded}m`;
+    return String(rounded);
+  }
 
-  const pathD = sorted.map((e, i) => `${i === 0 ? "M" : "L"}${px(i)},${py(e.value)}`).join(" ");
+  const yTicks = 5;
+  const yLabels = Array.from({ length: yTicks }, (_, i) => minVal + (range * i) / (yTicks - 1));
+
+  // Connect only recorded actual values (forecast-only periods leave a gap).
+  const actualPoints = sorted
+    .map((e, i) => ({ e, i }))
+    .filter(({ e }) => e.value != null);
+  const pathD = actualPoints
+    .map(({ e, i }, idx) => `${idx === 0 ? "M" : "L"}${px(i)},${py(e.value)}`)
+    .join(" ");
 
   return (
     <svg width={W} height={H} className="overflow-visible">
-      {/* Y-axis grid + labels */}
       {yLabels.map((v, i) => {
         const y = py(v);
         return (
           <g key={i}>
             <line x1={PAD.left} y1={y} x2={W - PAD.right} y2={y} stroke="#e2e8f0" strokeWidth="1" />
-            <text x={PAD.left - 6} y={y + 4} textAnchor="end" fontSize="11" fill="#94a3b8">{v}</text>
+            <text x={PAD.left - 6} y={y + 4} textAnchor="end" fontSize="10" fill="#94a3b8">{tickLabel(v)}</text>
           </g>
         );
       })}
-      {/* Line */}
-      {sorted.length > 1 && (
+      {actualPoints.length > 1 && (
         <path d={pathD} fill="none" stroke="#6366f1" strokeWidth="2" strokeLinejoin="round" />
       )}
-      {/* Dots */}
       {sorted.map((e, i) => (
-        <g key={e.id}>
-          <circle cx={px(i)} cy={py(e.value)} r="5" fill="white" stroke="#6366f1" strokeWidth="2" />
-          <text x={px(i)} y={H - 8} textAnchor="middle" fontSize="10" fill="#94a3b8">
+        <g key={e.id ?? `${e.period_start}`}>
+          {e.value != null && (
+            <circle cx={px(i)} cy={py(e.value)} r="5" fill="white" stroke="#6366f1" strokeWidth="2">
+              <title>{`Actual: ${formatKpiValue(e.value, targetType)}`}</title>
+            </circle>
+          )}
+          {e.forecast != null && (
+            <circle cx={px(i)} cy={py(e.forecast)} r="4" fill="white" stroke="#f97316" strokeWidth="2" strokeDasharray="2 2">
+              <title>{`Forecast: ${formatKpiValue(e.forecast, targetType)}`}</title>
+            </circle>
+          )}
+          <text x={px(i)} y={H - 22} textAnchor="middle" fontSize="10" fill="#94a3b8">
             {new Date(e.period_start + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}
           </text>
         </g>
       ))}
+      {/* Legend */}
+      <g transform={`translate(${PAD.left}, ${H - 6})`}>
+        <circle cx="4" cy="-3" r="4" fill="white" stroke="#6366f1" strokeWidth="2" />
+        <text x="12" y="0" fontSize="10" fill="#64748b">Actual</text>
+        <circle cx="58" cy="-3" r="3.5" fill="white" stroke="#f97316" strokeWidth="2" strokeDasharray="2 2" />
+        <text x="66" y="0" fontSize="10" fill="#64748b">Forecast</text>
+      </g>
     </svg>
   );
 }
@@ -203,26 +257,31 @@ function LinkTypeIcon({ type, className = "h-3.5 w-3.5" }) {
 // ─── KPI Modal ────────────────────────────────────────────────────────────────
 
 const INTERPOLATION_OPTIONS = [
-  { value: "latest_value", label: "Latest value" },
-  { value: "sum",          label: "Sum" },
-  { value: "average",      label: "Average" },
+  { value: "no_interpolation", label: "No interpolation" },
+  { value: "latest_value",     label: "Latest value" },
+  { value: "cumulative",       label: "Cumulative values" },
+  { value: "average",          label: "Average" },
 ];
 const TARGET_TYPE_OPTIONS = [
   { value: "number",     label: "Number" },
-  { value: "percentage", label: "Percentage" },
   { value: "currency",   label: "Currency" },
-  { value: "boolean",    label: "Yes / No" },
+  { value: "percentage", label: "Percentage" },
+  { value: "boolean",    label: "Boolean" },
+  { value: "direction",  label: "Direction" },
+  { value: "time",       label: "Time" },
 ];
 const FORMULA_OPTIONS = [
-  { value: "",           label: "Select formula" },
-  { value: "sum",        label: "Sum of entries" },
-  { value: "average",    label: "Average of entries" },
-  { value: "last",       label: "Last entry" },
-  { value: "max",        label: "Max entry" },
+  { value: "",         label: "Select formula" },
+  { value: "lte",      label: "<=" },
+  { value: "gte",      label: ">=" },
+  { value: "lt",       label: "<" },
+  { value: "gt",       label: ">" },
+  { value: "between",  label: "In between" },
+  { value: "equals",   label: "Equals" },
 ];
 const VIEW_OPTIONS = ["weekly", "monthly", "quarterly", "yearly"];
 
-function KPIModal({ team, users, rocks, teams, projects, currentUser, editing, onClose, onSave, saving }) {
+function KPIModal({ team, users, rocks, teams, projects, groups, currentUser, editing, onClose, onSave, saving, onGroupCreated }) {
   const [title, setTitle] = useState(editing?.title || "");
   const [desc, setDesc] = useState(editing?.description || "");
   const [ownerId, setOwnerId] = useState(
@@ -231,16 +290,90 @@ function KPIModal({ team, users, rocks, teams, projects, currentUser, editing, o
   const [teamId, setTeamId] = useState(String(editing?.team_id || team?.id || ""));
   const [rockId, setRockId] = useState(editing?.rock_id ? String(editing.rock_id) : "");
   const [projectId, setProjectId] = useState(editing?.project_id ? String(editing.project_id) : "");
-  const [kpiGroup, setKpiGroup] = useState(editing?.kpi_group || "");
+  const [kpiGroupId, setKpiGroupId] = useState(editing?.kpi_group_id ? String(editing.kpi_group_id) : "");
+  const [groupOpen, setGroupOpen] = useState(false);
+  const [groupSearch, setGroupSearch] = useState("");
+  const [creatingGroup, setCreatingGroup] = useState(false);
+  const groupRef = useRef(null);
   const [supportedViews, setSupportedViews] = useState(
     editing?.supported_views || ["weekly", "monthly", "quarterly", "yearly"]
   );
-  const [interpolation, setInterpolation] = useState(editing?.interpolation || "latest_value");
+  // "sum" was replaced by "cumulative" in the interpolation options; map legacy values.
+  const [interpolation, setInterpolation] = useState(
+    editing?.interpolation === "sum" ? "cumulative" : (editing?.interpolation || "no_interpolation")
+  );
   const [targetType, setTargetType] = useState(editing?.target_type || "number");
-  const [formula, setFormula] = useState(editing?.formula || "");
+  // Old formula values (sum/average/last/max) were replaced by comparison operators;
+  // fall back to "Select formula" for KPIs saved before the change.
+  const [formula, setFormula] = useState(
+    FORMULA_OPTIONS.some((o) => o.value === editing?.formula) ? editing.formula : ""
+  );
   const [referenceValue, setReferenceValue] = useState(
     editing?.reference_value != null ? String(editing.reference_value) : ""
   );
+  const [referenceMax, setReferenceMax] = useState(
+    editing?.reference_max != null ? String(editing.reference_max) : ""
+  );
+
+  // Rocks and KPI groups are team-scoped: when the KPI is created into another
+  // team, offer that team's rocks/groups instead of the current tab's. The
+  // current tab's come from props; other teams' are fetched on demand.
+  const [foreignRocks, setForeignRocks] = useState({}); // teamId -> rocks[]
+  const [foreignGroups, setForeignGroups] = useState({}); // teamId -> groups[]
+  const isHomeTeam = String(teamId) === String(team?.id);
+  const teamRocks = isHomeTeam ? rocks : (foreignRocks[teamId] || []);
+  const teamGroups = isHomeTeam ? (groups || []) : (foreignGroups[teamId] || []);
+  useEffect(() => {
+    if (String(teamId) === String(team?.id)) return;
+    let cancelled = false;
+    rockApi.list(Number(teamId))
+      .then((r) => {
+        if (!cancelled) setForeignRocks((prev) => ({ ...prev, [teamId]: Array.isArray(r) ? r : [] }));
+      })
+      .catch(() => {
+        if (!cancelled) setForeignRocks((prev) => ({ ...prev, [teamId]: [] }));
+      });
+    kpiApi.listGroups(Number(teamId))
+      .then((g) => {
+        if (!cancelled) setForeignGroups((prev) => ({ ...prev, [teamId]: Array.isArray(g) ? g : [] }));
+      })
+      .catch(() => {
+        if (!cancelled) setForeignGroups((prev) => ({ ...prev, [teamId]: [] }));
+      });
+    return () => { cancelled = true; };
+  }, [teamId, team?.id]);
+
+  useEffect(() => {
+    if (!groupOpen) return;
+    function handleOutside(e) {
+      if (groupRef.current && !groupRef.current.contains(e.target)) setGroupOpen(false);
+    }
+    document.addEventListener("mousedown", handleOutside);
+    return () => document.removeEventListener("mousedown", handleOutside);
+  }, [groupOpen]);
+
+  async function handleCreateGroup(name) {
+    setCreatingGroup(true);
+    try {
+      const group = await kpiApi.createGroup(Number(teamId), { name: name.trim() });
+      if (isHomeTeam) {
+        onGroupCreated(group);
+      } else {
+        setForeignGroups((prev) => ({
+          ...prev,
+          [teamId]: [...(prev[teamId] || []).filter((g) => g.id !== group.id), group],
+        }));
+      }
+      setKpiGroupId(String(group.id));
+      setGroupOpen(false);
+      setGroupSearch("");
+      toast.success(`Group "${group.name}" created.`);
+    } catch (err) {
+      toast.error(err.message || "Failed to create the group.");
+    } finally {
+      setCreatingGroup(false);
+    }
+  }
 
   const [selectedLinks, setSelectedLinks] = useState(
     (editing?.links || []).map((l) => ({ linked_type: l.linked_type, linked_id: l.linked_id, title: l.title }))
@@ -293,26 +426,49 @@ function KPIModal({ team, users, rocks, teams, projects, currentUser, editing, o
 
   function handleSubmit(e) {
     e.preventDefault();
-    if (!title.trim()) return;
+    if (!title.trim() || !rockId) return;
+    if (supportedViews.length === 0) {
+      toast.error("Select at least one supported view.");
+      return;
+    }
+    const isDirection = targetType === "direction";
+    const effectiveFormula = targetType === "boolean" && formula ? "equals" : formula;
+    if (effectiveFormula && !isDirection && referenceValue === "") {
+      toast.error("A reference value is required when a formula is selected.");
+      return;
+    }
+    if (effectiveFormula === "between") {
+      if (referenceMax === "") {
+        toast.error("The 'In between' formula needs both a minimum and a maximum.");
+        return;
+      }
+      if (Number(referenceValue) > Number(referenceMax)) {
+        toast.error("Minimum cannot be greater than maximum.");
+        return;
+      }
+    }
     onSave({
       title: title.trim(),
       description: desc || null,
       owner_id: ownerId ? Number(ownerId) : null,
-      rock_id: rockId ? Number(rockId) : null,
+      rock_id: Number(rockId),
       project_id: projectId ? Number(projectId) : null,
-      kpi_group: kpiGroup || null,
+      kpi_group_id: kpiGroupId ? Number(kpiGroupId) : null,
+      // Legacy label kept in sync for older consumers (e.g. project overview badge).
+      kpi_group: teamGroups.find((g) => String(g.id) === String(kpiGroupId))?.name || null,
       supported_views: supportedViews,
       interpolation,
       target_type: targetType,
-      formula: formula || null,
-      reference_value: referenceValue !== "" ? Number(referenceValue) : null,
+      formula: effectiveFormula || null,
+      reference_value: !isDirection && referenceValue !== "" ? Number(referenceValue) : null,
+      reference_max: effectiveFormula === "between" && referenceMax !== "" ? Number(referenceMax) : null,
       team_id: Number(teamId) || team?.id,
       links: selectedLinks,
     });
   }
 
   const selectedOwner = users.find((u) => String(u.id) === String(ownerId));
-  const selectedRock = rocks.find((r) => String(r.id) === String(rockId));
+  const selectedRock = teamRocks.find((r) => String(r.id) === String(rockId));
   const selectedTeam = (teams || []).find((t) => String(t.id) === String(teamId));
   const selectedProject = (projects || []).find((p) => String(p.id) === String(projectId));
 
@@ -367,7 +523,14 @@ function KPIModal({ team, users, rocks, teams, projects, currentUser, editing, o
                       <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 011.06 0L10 11.94l3.72-3.72a.75.75 0 111.06 1.06l-4.25 4.25a.75.75 0 01-1.06 0L5.22 9.28a.75.75 0 010-1.06z" clipRule="evenodd" />
                     </svg>
                   </div>
-                  <select value={teamId} onChange={(e) => setTeamId(e.target.value)}
+                  <select value={teamId}
+                    onChange={(e) => {
+                      if (e.target.value !== teamId) {
+                        setRockId("");      // rocks are team-scoped
+                        setKpiGroupId("");  // so are KPI groups
+                      }
+                      setTeamId(e.target.value);
+                    }}
                     className="absolute inset-0 w-full cursor-pointer opacity-0">
                     {(teams || []).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
                   </select>
@@ -420,14 +583,67 @@ function KPIModal({ team, users, rocks, teams, projects, currentUser, editing, o
                 </div>
               </div>
 
-              {/* KPI Group */}
-              <div>
+              {/* KPI Group — searchable combobox with inline create */}
+              <div ref={groupRef} className="relative">
                 <label className="mb-1.5 block text-xs font-semibold text-slate-500">KPI group</label>
-                <div className="relative">
-                  <input value={kpiGroup} onChange={(e) => setKpiGroup(e.target.value)}
-                    placeholder="Select or create a group"
-                    className="w-full appearance-none rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-700 placeholder:text-slate-400 outline-none focus:border-slate-400" />
-                </div>
+                <button type="button" onClick={() => setGroupOpen((v) => !v)}
+                  className="flex w-full items-center justify-between rounded-xl border border-slate-200 px-3 py-2.5 text-left text-sm hover:bg-slate-50">
+                  <span className={kpiGroupId ? "truncate text-slate-900" : "text-slate-400"}>
+                    {teamGroups.find((g) => String(g.id) === String(kpiGroupId))?.name || "Select or create a group"}
+                  </span>
+                  <svg className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${groupOpen ? "rotate-180" : ""}`} viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 011.06 0L10 11.94l3.72-3.72a.75.75 0 111.06 1.06l-4.25 4.25a.75.75 0 01-1.06 0L5.22 9.28a.75.75 0 010-1.06z" clipRule="evenodd" />
+                  </svg>
+                </button>
+                {groupOpen && (() => {
+                  const q = groupSearch.trim().toLowerCase();
+                  const filtered = teamGroups.filter((g) => !q || g.name.toLowerCase().includes(q));
+                  const exactMatch = teamGroups.some((g) => g.name.toLowerCase() === q);
+                  return (
+                    <div className="absolute left-0 right-0 z-20 mt-1.5 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
+                      <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-2">
+                        <svg className="h-3.5 w-3.5 shrink-0 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
+                          <path fillRule="evenodd" d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z" clipRule="evenodd" />
+                        </svg>
+                        <input autoFocus value={groupSearch} onChange={(e) => setGroupSearch(e.target.value)}
+                          placeholder="Search KPI groups..."
+                          className="w-full border-none text-sm text-slate-700 placeholder:text-slate-400 outline-none" />
+                      </div>
+                      <div className="max-h-44 overflow-y-auto py-1">
+                        <button type="button"
+                          onClick={() => { setKpiGroupId(""); setGroupOpen(false); setGroupSearch(""); }}
+                          className={`flex w-full items-center px-3 py-2 text-left text-sm hover:bg-slate-50 ${!kpiGroupId ? "font-medium text-slate-900" : "text-slate-600"}`}>
+                          No group
+                        </button>
+                        {filtered.length === 0 && q ? (
+                          <p className="px-3 py-3 text-center text-xs text-slate-400">No KPI groups found.</p>
+                        ) : (
+                          filtered.map((g) => (
+                            <button key={g.id} type="button"
+                              onClick={() => { setKpiGroupId(String(g.id)); setGroupOpen(false); setGroupSearch(""); }}
+                              className={`flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-slate-50 ${
+                                String(g.id) === String(kpiGroupId) ? "bg-slate-50 font-medium text-slate-900" : "text-slate-700"
+                              }`}>
+                              <span className="truncate">{g.name}</span>
+                              {String(g.id) === String(kpiGroupId) && (
+                                <svg className="h-3.5 w-3.5 shrink-0 text-slate-900" viewBox="0 0 20 20" fill="currentColor">
+                                  <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z" clipRule="evenodd" />
+                                </svg>
+                              )}
+                            </button>
+                          ))
+                        )}
+                      </div>
+                      {q && !exactMatch && (
+                        <button type="button" disabled={creatingGroup}
+                          onClick={() => handleCreateGroup(groupSearch)}
+                          className="flex w-full items-center border-t border-slate-100 px-3 py-2.5 text-left text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-60">
+                          {creatingGroup ? "Creating…" : `Create group: "${groupSearch.trim()}"`}
+                        </button>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Supported views */}
@@ -467,32 +683,85 @@ function KPIModal({ team, users, rocks, teams, projects, currentUser, editing, o
                 <label className="mb-1.5 block text-xs font-semibold text-slate-500">Formula</label>
                 <select value={formula} onChange={(e) => setFormula(e.target.value)}
                   className="w-full appearance-none rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-700 outline-none focus:border-slate-400">
-                  {FORMULA_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  {(targetType === "boolean"
+                    ? FORMULA_OPTIONS.filter((o) => o.value === "" || o.value === "equals")
+                    : targetType === "direction"
+                      ? FORMULA_OPTIONS.filter((o) => o.value !== "between")
+                      : FORMULA_OPTIONS
+                  ).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                 </select>
+                {targetType === "direction" && (
+                  <p className="mt-1 text-[11px] text-slate-400">
+                    Direction compares each value to the previous one: &gt;= means it should rise or hold, &lt;= means it should fall or hold.
+                  </p>
+                )}
               </div>
 
-              {/* Reference value */}
-              <div>
-                <label className="mb-1.5 block text-xs font-semibold text-slate-500">Reference value</label>
-                <input type="number" value={referenceValue} onChange={(e) => setReferenceValue(e.target.value)}
-                  placeholder="Enter value"
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-700 placeholder:text-slate-400 outline-none focus:border-slate-400" />
-              </div>
+              {/* Reference value(s) — direction needs none */}
+              {targetType !== "direction" && (
+                <div>
+                  <label className="mb-1.5 block text-xs font-semibold text-slate-500">
+                    {formula === "between" ? "Reference range" : "Reference value"}
+                  </label>
+                  {targetType === "boolean" ? (
+                    <select value={referenceValue} onChange={(e) => setReferenceValue(e.target.value)}
+                      className="w-full appearance-none rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-700 outline-none focus:border-slate-400">
+                      <option value="">Select target</option>
+                      <option value="1">Yes</option>
+                      <option value="0">No</option>
+                    </select>
+                  ) : formula === "between" ? (
+                    <div className="flex items-center gap-2">
+                      <input type="number" step="any" value={referenceValue}
+                        onChange={(e) => setReferenceValue(e.target.value)} placeholder="Min"
+                        className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-700 placeholder:text-slate-400 outline-none focus:border-slate-400" />
+                      <span className="text-xs text-slate-400">to</span>
+                      <input type="number" step="any" value={referenceMax}
+                        onChange={(e) => setReferenceMax(e.target.value)} placeholder="Max"
+                        className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-700 placeholder:text-slate-400 outline-none focus:border-slate-400" />
+                    </div>
+                  ) : (
+                    <div className="relative">
+                      {targetType === "currency" && (
+                        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">$</span>
+                      )}
+                      <input type="number" step="any" value={referenceValue}
+                        onChange={(e) => setReferenceValue(e.target.value)} placeholder="Enter value"
+                        className={`w-full rounded-xl border border-slate-200 py-2.5 text-sm text-slate-700 placeholder:text-slate-400 outline-none focus:border-slate-400 ${
+                          targetType === "currency" ? "pl-7 pr-3" : "px-3"
+                        }`} />
+                      {(targetType === "percentage" || targetType === "time") && (
+                        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">
+                          {targetType === "percentage" ? "%" : "min"}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
 
-              {/* Rock (optional) */}
+              {/* Rock (required) */}
               <div>
-                <label className="mb-1.5 block text-xs font-semibold text-slate-500">Rock (optional)</label>
+                <label className="mb-1.5 block text-xs font-semibold text-slate-500">Rock *</label>
                 <div className="relative">
                   <div className="flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2.5">
-                    <span className="flex-1 truncate text-sm text-slate-700">{selectedRock ? selectedRock.title : "No Rock"}</span>
+                    <span className={`flex-1 truncate text-sm ${selectedRock ? "text-slate-700" : "text-slate-400"}`}>
+                      {selectedRock ? selectedRock.title : "Select a Rock"}
+                    </span>
                     <svg className="h-4 w-4 shrink-0 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
                       <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 011.06 0L10 11.94l3.72-3.72a.75.75 0 111.06 1.06l-4.25 4.25a.75.75 0 01-1.06 0L5.22 9.28a.75.75 0 010-1.06z" clipRule="evenodd" />
                     </svg>
                   </div>
-                  <select value={rockId} onChange={(e) => setRockId(e.target.value)}
+                  <select value={rockId} onChange={(e) => setRockId(e.target.value)} required
                     className="absolute inset-0 w-full opacity-0 cursor-pointer">
-                    <option value="">No Rock</option>
-                    {rocks.map((r) => <option key={r.id} value={r.id}>{r.title}</option>)}
+                    <option value="">Select a Rock</option>
+                    {teamRocks
+                      .filter((r) => !r.is_archived && r.status !== "archived")
+                      .map((r) => <option key={r.id} value={r.id}>{r.title}</option>)}
+                    {/* Keep an archived rock selectable only if it's the KPI's current link */}
+                    {editing?.rock && teamRocks.some((r) => r.id === editing.rock.id && (r.is_archived || r.status === "archived")) && (
+                      <option value={editing.rock.id}>{editing.rock.title} (archived)</option>
+                    )}
                   </select>
                 </div>
               </div>
@@ -591,9 +860,73 @@ function KPIModal({ team, users, rocks, teams, projects, currentUser, editing, o
   );
 }
 
+// ─── Edit KPI Group modal ─────────────────────────────────────────────────────
+
+const GROUP_FORMULA_OPTIONS = [
+  { value: "sum",     label: "Sum" },
+  { value: "average", label: "Average" },
+];
+
+function KPIGroupModal({ group, onClose, onSave, saving }) {
+  const [name, setName] = useState(group.name);
+  const [formula, setFormula] = useState(group.formula || "sum");
+  const [collapse, setCollapse] = useState(Boolean(group.collapse_by_default));
+
+  function handleSubmit(e) {
+    e.preventDefault();
+    if (!name.trim()) return;
+    onSave({ name: name.trim(), formula, collapse_by_default: collapse });
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-950/40 p-8 backdrop-blur-sm">
+      <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl">
+        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+          <h2 className="text-base font-bold text-slate-900">Edit KPI Group</h2>
+          <button type="button" onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100">
+            <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+              <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+            </svg>
+          </button>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-4 px-6 py-5">
+          <div>
+            <label className="mb-1.5 block text-xs font-semibold text-slate-500">Group name</label>
+            <input value={name} onChange={(e) => setName(e.target.value)} required
+              className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-slate-400" />
+          </div>
+          <div>
+            <label className="mb-1.5 block text-xs font-semibold text-slate-500">Group formula</label>
+            <select value={formula} onChange={(e) => setFormula(e.target.value)}
+              className="w-full appearance-none rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-700 outline-none focus:border-slate-400">
+              {GROUP_FORMULA_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+            <p className="mt-1 text-[11px] text-slate-400">Controls the aggregate shown on the group's header row.</p>
+          </div>
+          <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
+            <input type="checkbox" checked={collapse} onChange={(e) => setCollapse(e.target.checked)}
+              className="h-4 w-4 rounded border-slate-300 accent-slate-900" />
+            Collapse this group by default
+          </label>
+          <div className="flex justify-end gap-2 border-t border-slate-100 pt-4">
+            <button type="button" onClick={onClose}
+              className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+              Cancel
+            </button>
+            <button type="submit" disabled={saving}
+              className="rounded-xl bg-slate-900 px-5 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-60">
+              {saving ? "Saving…" : "Save"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 // ─── KPI Trend modal ──────────────────────────────────────────────────────────
 
-function TrendModal({ kpi, onClose }) {
+function TrendModal({ kpi, view, onClose }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 backdrop-blur-sm p-6">
       <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl">
@@ -614,7 +947,7 @@ function TrendModal({ kpi, onClose }) {
         )}
 
         <div className="px-6 pb-6 overflow-x-auto">
-          <TrendChart entries={kpi.entries} />
+          <TrendChart entries={kpi.entries} view={view} targetType={kpi.target_type} />
         </div>
 
         <div className="flex justify-end border-t border-slate-100 px-6 py-4">
@@ -646,6 +979,15 @@ function RecordValueModal({ kpi, period, entry, teamId, onClose, onSaved }) {
 
   async function handleSave() {
     const num = value !== "" ? parseFloat(value) : null;
+    const fnum = forecast !== "" ? parseFloat(forecast) : null;
+    if ((num != null && !Number.isFinite(num)) || (fnum != null && !Number.isFinite(fnum))) {
+      toast.error("Enter a valid number.");
+      return;
+    }
+    if (kpi.target_type === "time" && ((num != null && num < 0) || (fnum != null && fnum < 0))) {
+      toast.error("Time values cannot be negative.");
+      return;
+    }
     setSaving(true);
     try {
       const saved = await kpiApi.upsertEntry(teamId, kpi.id, {
@@ -740,20 +1082,50 @@ function RecordValueModal({ kpi, period, entry, teamId, onClose, onSaved }) {
           {/* Value */}
           <div>
             <label className="mb-1.5 block text-sm font-semibold text-slate-800">Value</label>
-            <input type="number" value={value} onChange={(e) => setValue(e.target.value)}
-              placeholder="0"
-              className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm text-slate-800 outline-none focus:border-slate-400" />
+            {kpi.target_type === "boolean" ? (
+              <div className="flex gap-2">
+                {[{ v: "1", label: "Yes" }, { v: "0", label: "No" }, { v: "", label: "Not set" }].map((o) => (
+                  <button key={o.label} type="button" onClick={() => setValue(o.v)}
+                    className={`flex-1 rounded-xl border px-3 py-2.5 text-sm font-semibold transition ${
+                      value === o.v
+                        ? "border-slate-900 bg-slate-900 text-white"
+                        : "border-slate-200 text-slate-600 hover:bg-slate-50"
+                    }`}>
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="relative">
+                {kpi.target_type === "currency" && (
+                  <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-sm text-slate-400">$</span>
+                )}
+                <input type="number" step="any" min={kpi.target_type === "time" ? 0 : undefined}
+                  value={value} onChange={(e) => setValue(e.target.value)}
+                  placeholder="0"
+                  className={`w-full rounded-xl border border-slate-200 py-2.5 text-sm text-slate-800 outline-none focus:border-slate-400 ${
+                    kpi.target_type === "currency" ? "pl-8 pr-4" : "px-4"
+                  }`} />
+                {(kpi.target_type === "percentage" || kpi.target_type === "time") && (
+                  <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-xs text-slate-400">
+                    {kpi.target_type === "percentage" ? "%" : "min"}
+                  </span>
+                )}
+              </div>
+            )}
             <p className="mt-1 text-xs text-slate-400">Actual values are stored per {period.type}.</p>
           </div>
 
-          {/* Forecast */}
-          <div>
-            <label className="mb-1.5 block text-sm font-semibold text-slate-800">Forecast <span className="font-normal text-slate-400">(optional)</span></label>
-            <input type="number" value={forecast} onChange={(e) => setForecast(e.target.value)}
-              placeholder=""
-              className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm text-slate-800 outline-none focus:border-slate-400" />
-            <p className="mt-1 text-xs text-slate-400">Leave blank to remove the forecast number.</p>
-          </div>
+          {/* Forecast — not meaningful for yes/no KPIs */}
+          {kpi.target_type !== "boolean" && (
+            <div>
+              <label className="mb-1.5 block text-sm font-semibold text-slate-800">Forecast <span className="font-normal text-slate-400">(optional)</span></label>
+              <input type="number" step="any" value={forecast} onChange={(e) => setForecast(e.target.value)}
+                placeholder=""
+                className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm text-slate-800 outline-none focus:border-slate-400" />
+              <p className="mt-1 text-xs text-slate-400">Leave blank to remove the forecast number.</p>
+            </div>
+          )}
 
           {/* Notes */}
           <div>
@@ -837,24 +1209,42 @@ function RecordValueModal({ kpi, period, entry, teamId, onClose, onSaved }) {
 
 // ─── Value cell (click to open modal) ────────────────────────────────────────
 
-function ValueCell({ value, onClick }) {
+function ValueCell({ value, derivedValue, targetType, onClick }) {
+  const isDerived = value == null && derivedValue != null;
+  const display = value != null
+    ? formatKpiValue(value, targetType)
+    : isDerived
+      ? `≈ ${formatKpiValue(derivedValue, targetType)}`
+      : null;
   return (
     <button type="button" onClick={onClick}
-      className="w-20 rounded border border-dashed border-slate-200 py-0.5 text-center text-sm text-slate-700 hover:border-slate-400 hover:bg-slate-50 transition-colors">
-      {value != null ? value : <span className="text-slate-300">—</span>}
+      title={isDerived ? "Interpolated from finer-grained values — click to record an actual value" : undefined}
+      className={`w-20 rounded border border-dashed border-slate-200 py-0.5 text-center text-sm hover:border-slate-400 hover:bg-slate-50 transition-colors ${
+        isDerived ? "italic text-slate-400" : "text-slate-700"
+      }`}>
+      {display ?? <span className="text-slate-300">—</span>}
     </button>
   );
 }
 
 // ─── KPI row ──────────────────────────────────────────────────────────────────
 
-function KPIRow({ kpi, index, isDragOver, teamId, view, periods, canManage, onEdit, onDelete, onTrend, onEntrySaved, onOpenRecord, onDragStart, onDragOver, onDrop, onDragEnd }) {
+function KPIRow({ kpi, index, isDragOver, teamId, view, periods, canManage, onEdit, onDelete, onTrend, onEntrySaved, onOpenRecord, onToggleSnooze, onDragStart, onDragOver, onDrop, onDragEnd, onOwnerClick, ownerSelected }) {
   const isNew = Date.now() - new Date(kpi.created_at).getTime() < 7 * 24 * 60 * 60 * 1000;
 
   const entryMap = {};
   (kpi.entries || []).forEach((e) => {
     if (e.period_type === view) entryMap[e.period_start] = e;
   });
+  // Server-computed interpolated values for this view (shown only where no
+  // manual value exists; never editable — clicking records a manual value).
+  const derivedMap = {};
+  (kpi.derived_entries || []).forEach((d) => {
+    if (d.period_type === view) derivedMap[d.period_start] = d;
+  });
+
+  const status = kpi.statuses?.[view] || "no_data";
+  const st = STATUS_STYLES[status] || STATUS_STYLES.no_data;
 
   const forecastPeriod = periods[0];
   const forecastEntry = forecastPeriod ? entryMap[forecastPeriod.key] : null;
@@ -876,32 +1266,76 @@ function KPIRow({ kpi, index, isDragOver, teamId, view, periods, canManage, onEd
       <td className="py-3 pl-3 pr-1 w-6">
         <span className="cursor-grab select-none text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity text-base leading-none">⠿</span>
       </td>
-      {/* Status — click opens trend */}
+      {/* Status — server-computed; click opens trend */}
       <td className="py-3 pl-2 pr-3 w-16">
-        <button type="button" onClick={() => onTrend(kpi)} title="View trend"
-          className="flex h-7 w-7 items-center justify-center rounded-full border-2 border-slate-300 text-slate-400 hover:border-indigo-400 hover:text-indigo-500 transition-colors">
-          <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
-            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm0-2a6 6 0 100-12 6 6 0 000 12z" clipRule="evenodd" />
-          </svg>
+        <button type="button" onClick={() => onTrend(kpi)} title={`${st.label} — view trend`}
+          className={`flex h-7 w-7 items-center justify-center rounded-full border-2 transition-colors hover:opacity-75 ${st.border} ${st.text}`}>
+          {status === "snoozed" ? (
+            <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+              <path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z" />
+            </svg>
+          ) : (
+            <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm0-2a6 6 0 100-12 6 6 0 000 12z" clipRule="evenodd" />
+            </svg>
+          )}
         </button>
       </td>
-      {/* KPI name */}
+      {/* KPI name — leading icon is the snooze toggle */}
       <td className="py-3 pr-3">
         <div className="flex items-center gap-2">
-          <svg className="h-4 w-4 shrink-0 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
-            <path fillRule="evenodd" d="M12.577 4.878a.75.75 0 01.919-.53l4.78 1.281a.75.75 0 01.531.919l-1.281 4.78a.75.75 0 01-1.449-.387l.81-3.022a19.407 19.407 0 00-5.594 5.203.75.75 0 01-1.139.093L7 10.06l-4.72 4.72a.75.75 0 01-1.06-1.061l5.25-5.25a.75.75 0 011.06 0l3.074 3.073a20.923 20.923 0 015.545-4.931l-3.042-.815a.75.75 0 01-.53-.918z" clipRule="evenodd" />
-          </svg>
+          <button type="button"
+            onClick={() => canManage && onToggleSnooze(kpi)}
+            disabled={!canManage}
+            title={kpi.is_snoozed
+              ? "Snoozed — click to reactivate this KPI."
+              : "Snooze until status becomes at-risk or off-track."}
+            className={`group/snooze flex h-6 w-6 shrink-0 items-center justify-center rounded ${
+              canManage ? "hover:bg-slate-100" : "cursor-default"
+            } ${kpi.is_snoozed ? "text-slate-500" : "text-slate-400"}`}>
+            {kpi.is_snoozed ? (
+              <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                <path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z" />
+              </svg>
+            ) : (
+              <>
+                <svg className={`h-4 w-4 ${canManage ? "group-hover/snooze:hidden" : ""}`} viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M12.577 4.878a.75.75 0 01.919-.53l4.78 1.281a.75.75 0 01.531.919l-1.281 4.78a.75.75 0 01-1.449-.387l.81-3.022a19.407 19.407 0 00-5.594 5.203.75.75 0 01-1.139.093L7 10.06l-4.72 4.72a.75.75 0 01-1.06-1.061l5.25-5.25a.75.75 0 011.06 0l3.074 3.073a20.923 20.923 0 015.545-4.931l-3.042-.815a.75.75 0 01-.53-.918z" clipRule="evenodd" />
+                </svg>
+                {canManage && (
+                  <svg className="hidden h-4 w-4 group-hover/snooze:block" viewBox="0 0 20 20" fill="currentColor">
+                    <path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z" />
+                  </svg>
+                )}
+              </>
+            )}
+          </button>
           <span className="text-sm font-medium text-slate-800">{kpi.title}</span>
           {isNew && <span className="rounded bg-slate-900 px-1.5 py-0.5 text-[10px] font-bold text-white">NEW</span>}
+          {kpi.rock && (
+            <span className="inline-flex max-w-[160px] items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500"
+              title={`Rock: ${kpi.rock.title}`}>
+              <svg className="h-2.5 w-2.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                <path d="M10 2L3 7l2.5 11h9L17 7l-7-5z" />
+              </svg>
+              <span className="truncate">{kpi.rock.title}</span>
+            </span>
+          )}
+          {status === "snoozed" && (
+            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-400">Snoozed</span>
+          )}
         </div>
       </td>
-      {/* Owner */}
+      {/* Owner — click toggles this owner in the filter */}
       <td className="py-3 pr-3 w-16">
         {owner ? (
-          <div className={`flex h-7 w-7 items-center justify-center rounded-full text-[10px] font-bold text-white ${AVATAR_COLORS[owner.id % AVATAR_COLORS.length]}`}
-            title={owner.full_name || owner.email}>
+          <button type="button" onClick={() => onOwnerClick(owner)}
+            title={`${owner.full_name || owner.email} — click to filter`}
+            className={`flex h-7 w-7 items-center justify-center rounded-full text-[10px] font-bold text-white transition ${AVATAR_COLORS[owner.id % AVATAR_COLORS.length]} ${
+              ownerSelected ? "ring-2 ring-slate-900 ring-offset-2" : "hover:ring-2 hover:ring-slate-300 hover:ring-offset-2"
+            }`}>
             {getInitials(owner.full_name || owner.email)}
-          </div>
+          </button>
         ) : <span className="text-slate-300">—</span>}
       </td>
       {/* Forecast (current period) */}
@@ -909,6 +1343,8 @@ function KPIRow({ kpi, index, isDragOver, teamId, view, periods, canManage, onEd
         <div className="flex items-center gap-1.5 flex-wrap">
           <ValueCell
             value={forecastEntry?.value}
+            derivedValue={forecastPeriod ? derivedMap[forecastPeriod.key]?.value : null}
+            targetType={kpi.target_type}
             onClick={() => onOpenRecord(kpi, { ...forecastPeriod, type: view }, forecastEntry)}
           />
           {forecastBadge && (
@@ -929,6 +1365,8 @@ function KPIRow({ kpi, index, isDragOver, teamId, view, periods, canManage, onEd
         <td key={p.key} className="py-3 pr-4 w-28">
           <ValueCell
             value={entryMap[p.key]?.value}
+            derivedValue={derivedMap[p.key]?.value}
+            targetType={kpi.target_type}
             onClick={() => onOpenRecord(kpi, { ...p, type: view }, entryMap[p.key])}
           />
         </td>
@@ -980,9 +1418,97 @@ export default function KPIsTab({ team, canManage }) {
   const [recordModal, setRecordModal] = useState(null); // { kpi, period, entry }
   const [dragIdx, setDragIdx] = useState(null);
   const [overIdx, setOverIdx] = useState(null);
-  const [showReport, setShowReport] = useState(false);
+  const [ownerFilter, setOwnerFilter] = useState([]); // selected owner user ids
+  const [ownerMenuOpen, setOwnerMenuOpen] = useState(false);
+  const ownerMenuRef = useRef(null);
+  const [rockFilter, setRockFilter] = useState([]); // selected rock ids
+  const [rockMenuOpen, setRockMenuOpen] = useState(false);
+  const rockMenuRef = useRef(null);
+  const [lifeFilter, setLifeFilter] = useState("active"); // active | snoozed
+  const [groups, setGroups] = useState([]);
+  const [collapsedGroups, setCollapsedGroups] = useState(new Set());
+  const [editingGroup, setEditingGroup] = useState(null);
+  const [groupSaving, setGroupSaving] = useState(false);
+  const [groupMenuId, setGroupMenuId] = useState(null);
 
   const users = team?.members || [];
+
+  useEffect(() => {
+    if (!ownerMenuOpen && !rockMenuOpen) return;
+    function handleOutside(e) {
+      if (ownerMenuRef.current && !ownerMenuRef.current.contains(e.target)) setOwnerMenuOpen(false);
+      if (rockMenuRef.current && !rockMenuRef.current.contains(e.target)) setRockMenuOpen(false);
+    }
+    document.addEventListener("mousedown", handleOutside);
+    return () => document.removeEventListener("mousedown", handleOutside);
+  }, [ownerMenuOpen, rockMenuOpen]);
+
+  function toggleOwnerFilter(ownerId) {
+    setOwnerFilter((prev) =>
+      prev.includes(ownerId) ? prev.filter((id) => id !== ownerId) : [...prev, ownerId]
+    );
+  }
+
+  function toggleRockFilter(rockId) {
+    setRockFilter((prev) =>
+      prev.includes(rockId) ? prev.filter((id) => id !== rockId) : [...prev, rockId]
+    );
+  }
+
+  function handleGroupCreated(group) {
+    setGroups((prev) =>
+      prev.some((g) => g.id === group.id)
+        ? prev
+        : [...prev, group].sort((a, b) => a.name.localeCompare(b.name))
+    );
+  }
+
+  function toggleGroupCollapse(groupId) {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      next.has(groupId) ? next.delete(groupId) : next.add(groupId);
+      return next;
+    });
+  }
+
+  async function handleSaveGroup(payload) {
+    setGroupSaving(true);
+    try {
+      const updated = await kpiApi.updateGroup(team.id, editingGroup.id, payload);
+      setGroups((prev) =>
+        prev.map((g) => (g.id === updated.id ? updated : g)).sort((a, b) => a.name.localeCompare(b.name))
+      );
+      setEditingGroup(null);
+      toast.success("Group updated.");
+    } catch (err) {
+      toast.error(err.message || "Failed to update the group.");
+    } finally {
+      setGroupSaving(false);
+    }
+  }
+
+  async function handleDeleteGroup(group) {
+    setGroupMenuId(null);
+    if (!confirm(`Delete group "${group.name}"? Its KPIs will be kept and become ungrouped.`)) return;
+    try {
+      await kpiApi.deleteGroup(team.id, group.id);
+      setGroups((prev) => prev.filter((g) => g.id !== group.id));
+      setKpis((prev) => prev.map((k) => (k.kpi_group_id === group.id ? { ...k, kpi_group_id: null, kpi_group: null } : k)));
+      toast.success("Group deleted. Its KPIs were kept.");
+    } catch (err) {
+      toast.error(err.message || "Failed to delete the group.");
+    }
+  }
+
+  async function handleToggleSnooze(kpi) {
+    try {
+      const updated = await kpiApi.update(team.id, kpi.id, { is_snoozed: !kpi.is_snoozed });
+      setKpis((prev) => prev.map((k) => (k.id === kpi.id ? updated : k)));
+      toast.success(updated.is_snoozed ? "KPI snoozed. Find it under the Snoozed tab." : "KPI reactivated.");
+    } catch {
+      toast.error("Failed to update the KPI.");
+    }
+  }
 
   useEffect(() => {
     if (!team?.id) return;
@@ -1006,6 +1532,13 @@ export default function KPIsTab({ team, canManage }) {
         const ps = await projectApi.list();
         if (Array.isArray(ps)) setProjects(ps);
       } catch { /* projects optional */ }
+      try {
+        const gs = await kpiApi.listGroups(team.id);
+        if (Array.isArray(gs)) {
+          setGroups(gs);
+          setCollapsedGroups(new Set(gs.filter((g) => g.collapse_by_default).map((g) => g.id)));
+        }
+      } catch { /* groups optional */ }
     } catch {
       toast.error("Failed to load KPIs.");
     } finally {
@@ -1055,7 +1588,7 @@ export default function KPIsTab({ team, canManage }) {
 
   function handleDrop(toIdx) {
     if (dragIdx === null || dragIdx === toIdx) { setDragIdx(null); setOverIdx(null); return; }
-    const reordered = [...visibleKpis];
+    const reordered = [...orderedVisible];
     const [moved] = reordered.splice(dragIdx, 1);
     reordered.splice(toIdx, 0, moved);
     const ordered = reordered.map((k, i) => ({ ...k, sort_order: i }));
@@ -1096,9 +1629,60 @@ export default function KPIsTab({ team, canManage }) {
   }
 
   const periods = generatePeriods(view);
-  const visibleKpis = kpis.filter((k) =>
-    !k.supported_views || k.supported_views.includes(view)
+  // Effective snooze comes from the server-computed status: a snooze breaks
+  // as soon as the KPI would be at-risk or off-track, and expires after
+  // snoozed_until. Fall back to the raw flag if no status is available.
+  const todayKey = isoDate(new Date());
+  const isSnoozedNow = (k) => {
+    const s = k.statuses?.[view];
+    if (s !== undefined) return s === "snoozed";
+    return k.is_snoozed && (!k.snoozed_until || k.snoozed_until >= todayKey);
+  };
+
+  const viewKpis = kpis.filter((k) =>
+    (!k.supported_views || k.supported_views.includes(view)) &&
+    (lifeFilter === "snoozed" ? isSnoozedNow(k) : !isSnoozedNow(k))
   );
+
+  // Owners / rocks present in the current view, with how many KPIs each has.
+  const ownerOptions = [];
+  const rockOptions = [];
+  viewKpis.forEach((k) => {
+    if (k.owner) {
+      const existing = ownerOptions.find((o) => o.id === k.owner.id);
+      if (existing) existing.count += 1;
+      else ownerOptions.push({ ...k.owner, count: 1 });
+    }
+    if (k.rock) {
+      const existing = rockOptions.find((r) => r.id === k.rock.id);
+      if (existing) existing.count += 1;
+      else rockOptions.push({ ...k.rock, count: 1 });
+    }
+  });
+
+  const visibleKpis = viewKpis.filter((k) =>
+    (ownerFilter.length === 0 || (k.owner && ownerFilter.includes(k.owner.id))) &&
+    (rockFilter.length === 0 || (k.rock && rockFilter.includes(k.rock.id)))
+  );
+
+  // Grouped rendering: ungrouped KPIs first, then one section per group.
+  const ungroupedKpis = visibleKpis.filter((k) => !k.kpi_group_id);
+  const groupSections = groups
+    .map((g) => ({ group: g, kpis: visibleKpis.filter((k) => k.kpi_group_id === g.id) }))
+    .filter((s) => s.kpis.length > 0);
+  const orderedVisible = [...ungroupedKpis, ...groupSections.flatMap((s) => s.kpis)];
+  const rowIndexOf = new Map(orderedVisible.map((k, i) => [k.id, i]));
+
+  // Aggregate of a group's recorded values for one period, per group formula.
+  function groupAggregate(section, periodKey) {
+    const values = section.kpis
+      .map((k) => (k.entries || []).find((e) => e.period_type === view && e.period_start === periodKey)?.value)
+      .filter((v) => v != null);
+    if (values.length === 0) return null;
+    const sum = values.reduce((a, b) => a + b, 0);
+    const result = section.group.formula === "average" ? sum / values.length : sum;
+    return Math.round(result * 100) / 100;
+  }
 
   return (
     <div>
@@ -1116,13 +1700,6 @@ export default function KPIsTab({ team, canManage }) {
           </button>
         </div>
         <div className="flex items-center gap-2">
-          <button type="button" onClick={() => setShowReport(true)}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50">
-            <svg className="h-4 w-4 text-teal-600" viewBox="0 0 20 20" fill="currentColor">
-              <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clipRule="evenodd" />
-            </svg>
-            Download Report
-          </button>
           {canManage && (
             <button type="button" onClick={() => { setEditing(null); setShowModal(true); }}
               className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50">
@@ -1147,13 +1724,116 @@ export default function KPIsTab({ team, canManage }) {
             </button>
           ))}
         </div>
-        <button type="button"
-          className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50 shadow-sm">
-          Owner
-          <svg className="h-4 w-4 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
-            <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 011.06 0L10 11.94l3.72-3.72a.75.75 0 111.06 1.06l-4.25 4.25a.75.75 0 01-1.06 0L5.22 9.28a.75.75 0 010-1.06z" clipRule="evenodd" />
-          </svg>
-        </button>
+        <div className="flex items-center gap-2">
+        {/* Active / Snoozed */}
+        <div className="flex items-center gap-1">
+          {[{ id: "active", label: "Active" }, { id: "snoozed", label: "Snoozed" }].map((f) => (
+            <button key={f.id} type="button" onClick={() => setLifeFilter(f.id)}
+              className={`rounded-full px-3 py-1.5 text-sm font-semibold transition ${
+                lifeFilter === f.id ? "bg-slate-900 text-white" : "text-slate-500 hover:bg-slate-100"
+              }`}>
+              {f.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Rock filter */}
+        <div ref={rockMenuRef} className="relative">
+          <button type="button" onClick={() => setRockMenuOpen((v) => !v)}
+            className={`flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-sm font-medium shadow-sm ${
+              rockFilter.length > 0
+                ? "border-slate-900 bg-slate-900 text-white hover:bg-slate-700"
+                : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+            }`}>
+            Rock{rockFilter.length > 0 ? ` (${rockFilter.length})` : ""}
+            <svg className={`h-4 w-4 transition-transform ${rockFilter.length > 0 ? "text-white/70" : "text-slate-400"} ${rockMenuOpen ? "rotate-180" : ""}`} viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 011.06 0L10 11.94l3.72-3.72a.75.75 0 111.06 1.06l-4.25 4.25a.75.75 0 01-1.06 0L5.22 9.28a.75.75 0 010-1.06z" clipRule="evenodd" />
+            </svg>
+          </button>
+          {rockMenuOpen && (
+            <div className="absolute right-0 top-full z-30 mt-1.5 w-64 rounded-xl border border-slate-200 bg-white py-1 shadow-xl">
+              <button type="button"
+                onClick={() => { setRockFilter([]); setRockMenuOpen(false); }}
+                className="flex w-full items-center px-3 py-2 text-sm text-slate-600 hover:bg-slate-50">
+                Clear
+              </button>
+              <div className="my-1 border-t border-slate-100" />
+              {rockOptions.length === 0 ? (
+                <p className="px-3 py-3 text-center text-xs text-slate-400">No linked Rocks in this view.</p>
+              ) : (
+                rockOptions.map((r) => {
+                  const selected = rockFilter.includes(r.id);
+                  return (
+                    <button key={r.id} type="button" onClick={() => toggleRockFilter(r.id)}
+                      className="flex w-full items-center gap-2.5 px-3 py-2 text-sm hover:bg-slate-50">
+                      <span className="flex w-4 shrink-0 justify-center text-slate-700">
+                        {selected && (
+                          <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                            <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z" clipRule="evenodd" />
+                          </svg>
+                        )}
+                      </span>
+                      <svg className="h-3.5 w-3.5 shrink-0 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
+                        <path d="M10 2L3 7l2.5 11h9L17 7l-7-5z" />
+                      </svg>
+                      <span className="flex-1 truncate text-left text-slate-800">{r.title}</span>
+                      <span className="shrink-0 text-xs text-slate-400">{r.count}</span>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          )}
+        </div>
+
+        <div ref={ownerMenuRef} className="relative">
+          <button type="button" onClick={() => setOwnerMenuOpen((v) => !v)}
+            className={`flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-sm font-medium shadow-sm ${
+              ownerFilter.length > 0
+                ? "border-slate-900 bg-slate-900 text-white hover:bg-slate-700"
+                : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+            }`}>
+            Owner{ownerFilter.length > 0 ? ` (${ownerFilter.length})` : ""}
+            <svg className={`h-4 w-4 transition-transform ${ownerFilter.length > 0 ? "text-white/70" : "text-slate-400"} ${ownerMenuOpen ? "rotate-180" : ""}`} viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 011.06 0L10 11.94l3.72-3.72a.75.75 0 111.06 1.06l-4.25 4.25a.75.75 0 01-1.06 0L5.22 9.28a.75.75 0 010-1.06z" clipRule="evenodd" />
+            </svg>
+          </button>
+          {ownerMenuOpen && (
+            <div className="absolute right-0 top-full z-30 mt-1.5 w-64 rounded-xl border border-slate-200 bg-white py-1 shadow-xl">
+              <button type="button"
+                onClick={() => { setOwnerFilter([]); setOwnerMenuOpen(false); }}
+                className="flex w-full items-center px-3 py-2 text-sm text-slate-600 hover:bg-slate-50">
+                Clear
+              </button>
+              <div className="my-1 border-t border-slate-100" />
+              {ownerOptions.length === 0 ? (
+                <p className="px-3 py-3 text-center text-xs text-slate-400">No owners assigned yet.</p>
+              ) : (
+                ownerOptions.map((o) => {
+                  const selected = ownerFilter.includes(o.id);
+                  return (
+                    <button key={o.id} type="button" onClick={() => toggleOwnerFilter(o.id)}
+                      className="flex w-full items-center gap-2.5 px-3 py-2 text-sm hover:bg-slate-50">
+                      <span className="flex w-4 shrink-0 justify-center text-slate-700">
+                        {selected && (
+                          <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                            <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z" clipRule="evenodd" />
+                          </svg>
+                        )}
+                      </span>
+                      <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[9px] font-bold text-white ${AVATAR_COLORS[o.id % AVATAR_COLORS.length]}`}>
+                        {getInitials(o.full_name || o.email)}
+                      </span>
+                      <span className="flex-1 truncate text-left text-slate-800">{o.full_name || o.email}</span>
+                      <span className="shrink-0 text-xs text-slate-400">{o.count}</span>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          )}
+        </div>
+        </div>
       </div>
 
       {/* Table */}
@@ -1168,9 +1848,17 @@ export default function KPIsTab({ team, canManage }) {
               <path fillRule="evenodd" d="M12.577 4.878a.75.75 0 01.919-.53l4.78 1.281a.75.75 0 01.531.919l-1.281 4.78a.75.75 0 01-1.449-.387l.81-3.022a19.407 19.407 0 00-5.594 5.203.75.75 0 01-1.139.093L7 10.06l-4.72 4.72a.75.75 0 01-1.06-1.061l5.25-5.25a.75.75 0 011.06 0l3.074 3.073a20.923 20.923 0 015.545-4.931l-3.042-.815a.75.75 0 01-.53-.918z" clipRule="evenodd" />
             </svg>
           </div>
-          <p className="text-sm font-semibold text-slate-700">No KPIs yet</p>
+          <p className="text-sm font-semibold text-slate-700">
+            {ownerFilter.length > 0 || rockFilter.length > 0
+              ? "No KPIs match the selected filters"
+              : lifeFilter === "snoozed" ? "No snoozed KPIs" : "No KPIs yet"}
+          </p>
           <p className="mt-1 text-sm text-slate-400">
-            {canManage ? 'Click "+ New KPI" to add one.' : "Nothing here yet."}
+            {ownerFilter.length > 0 || rockFilter.length > 0
+              ? "Adjust or clear the Owner / Rock filters to see more."
+              : lifeFilter === "snoozed"
+                ? "Snoozed KPIs will appear here."
+                : canManage ? 'Click "+ New KPI" to add one.' : "Nothing here yet."}
           </p>
         </div>
       ) : (
@@ -1190,27 +1878,112 @@ export default function KPIsTab({ team, canManage }) {
               </tr>
             </thead>
             <tbody>
-              {visibleKpis.map((kpi, idx) => (
-                <KPIRow
-                  key={kpi.id}
-                  kpi={kpi}
-                  index={idx}
-                  isDragOver={overIdx === idx}
-                  teamId={team.id}
-                  view={view}
-                  periods={periods}
-                  canManage={canManage}
-                  onEdit={(k) => { setEditing(k); setShowModal(true); }}
-                  onDelete={handleDelete}
-                  onTrend={(k) => setTrendKpi(k)}
-                  onEntrySaved={handleEntrySaved}
-                  onOpenRecord={(kpi, period, entry) => setRecordModal({ kpi, period, entry })}
-                  onDragStart={() => setDragIdx(idx)}
-                  onDragOver={() => setOverIdx(idx)}
-                  onDrop={() => handleDrop(idx)}
-                  onDragEnd={() => { setDragIdx(null); setOverIdx(null); }}
-                />
-              ))}
+              {(() => {
+                const renderRow = (kpi) => {
+                  const idx = rowIndexOf.get(kpi.id);
+                  return (
+                    <KPIRow
+                      key={kpi.id}
+                      kpi={kpi}
+                      index={idx}
+                      isDragOver={overIdx === idx}
+                      teamId={team.id}
+                      view={view}
+                      periods={periods}
+                      canManage={canManage}
+                      onEdit={(k) => { setEditing(k); setShowModal(true); }}
+                      onDelete={handleDelete}
+                      onTrend={(k) => setTrendKpi(k)}
+                      onEntrySaved={handleEntrySaved}
+                      onOpenRecord={(kpi, period, entry) => setRecordModal({ kpi, period, entry })}
+                      onToggleSnooze={handleToggleSnooze}
+                      onDragStart={() => setDragIdx(idx)}
+                      onDragOver={() => setOverIdx(idx)}
+                      onDrop={() => handleDrop(idx)}
+                      onDragEnd={() => { setDragIdx(null); setOverIdx(null); }}
+                      onOwnerClick={(o) => toggleOwnerFilter(o.id)}
+                      ownerSelected={Boolean(kpi.owner && ownerFilter.includes(kpi.owner.id))}
+                    />
+                  );
+                };
+
+                return (
+                  <>
+                    {ungroupedKpis.map(renderRow)}
+                    {groupSections.map((section) => {
+                      const { group } = section;
+                      const isCollapsed = collapsedGroups.has(group.id);
+                      return (
+                        <Fragment key={`group-${group.id}`}>
+                          {/* Group header row */}
+                          <tr className="border-b border-slate-100 bg-slate-50/80">
+                            <td className="py-3 pl-3 pr-1 w-6" />
+                            <td className="py-3 pl-2 pr-3 w-16">
+                              <button type="button" onClick={() => toggleGroupCollapse(group.id)}
+                                title={isCollapsed ? "Expand group" : "Collapse group"}
+                                className="flex h-6 w-6 items-center justify-center rounded text-slate-400 hover:bg-slate-200 hover:text-slate-600 transition-transform"
+                                style={{ transform: isCollapsed ? "" : "rotate(90deg)" }}>
+                                <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                                  <path fillRule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clipRule="evenodd" />
+                                </svg>
+                              </button>
+                            </td>
+                            <td className="py-3 pr-3" colSpan={2}>
+                              <div className="flex items-center gap-2">
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                                  {group.formula === "average" ? "Avg" : "Sum"}
+                                </span>
+                                <span className="text-sm font-semibold text-slate-800">{group.name}</span>
+                                <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-500">
+                                  {section.kpis.length} KPI{section.kpis.length === 1 ? "" : "s"}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="py-3 pr-4 w-32 text-sm font-medium text-slate-600">
+                              {groupAggregate(section, periods[0]?.key)?.toLocaleString() ?? <span className="text-slate-300">—</span>}
+                            </td>
+                            {periods.slice(1).map((p) => (
+                              <td key={p.key} className="py-3 pr-4 w-28 text-sm font-medium text-slate-600">
+                                {groupAggregate(section, p.key)?.toLocaleString() ?? <span className="text-slate-300">—</span>}
+                              </td>
+                            ))}
+                            <td className="py-3 pr-4 w-16">
+                              {canManage && (
+                                <div className="relative">
+                                  <button type="button"
+                                    onClick={(e) => { e.stopPropagation(); setGroupMenuId(groupMenuId === group.id ? null : group.id); }}
+                                    className="rounded p-1.5 text-slate-400 hover:bg-slate-200 hover:text-slate-600">
+                                    <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                                      <path d="M10 3a1.5 1.5 0 110 3 1.5 1.5 0 010-3zM10 8.5a1.5 1.5 0 110 3 1.5 1.5 0 010-3zM11.5 15.5a1.5 1.5 0 10-3 0 1.5 1.5 0 003 0z" />
+                                    </svg>
+                                  </button>
+                                  {groupMenuId === group.id && (
+                                    <>
+                                      <div className="fixed inset-0 z-10" onClick={() => setGroupMenuId(null)} />
+                                      <div className="absolute right-0 top-8 z-20 w-40 rounded-xl border border-slate-200 bg-white py-1 shadow-xl">
+                                        <button type="button"
+                                          onClick={() => { setGroupMenuId(null); setEditingGroup(group); }}
+                                          className="flex w-full items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">
+                                          Edit group
+                                        </button>
+                                        <button type="button" onClick={() => handleDeleteGroup(group)}
+                                          className="flex w-full items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50">
+                                          Delete group
+                                        </button>
+                                      </div>
+                                    </>
+                                  )}
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                          {!isCollapsed && section.kpis.map(renderRow)}
+                        </Fragment>
+                      );
+                    })}
+                  </>
+                );
+              })()}
             </tbody>
           </table>
         </div>
@@ -1223,16 +1996,27 @@ export default function KPIsTab({ team, canManage }) {
           rocks={rocks}
           teams={teams}
           projects={projects}
+          groups={groups}
           currentUser={user}
           editing={editing}
           onClose={() => { setShowModal(false); setEditing(null); }}
           onSave={handleSave}
           saving={saving}
+          onGroupCreated={handleGroupCreated}
+        />
+      )}
+
+      {editingGroup && (
+        <KPIGroupModal
+          group={editingGroup}
+          onClose={() => setEditingGroup(null)}
+          onSave={handleSaveGroup}
+          saving={groupSaving}
         />
       )}
 
       {trendKpi && (
-        <TrendModal kpi={trendKpi} onClose={() => setTrendKpi(null)} />
+        <TrendModal kpi={trendKpi} view={view} onClose={() => setTrendKpi(null)} />
       )}
 
       {recordModal && (
@@ -1247,10 +2031,6 @@ export default function KPIsTab({ team, canManage }) {
             setRecordModal((prev) => prev ? { ...prev, entry } : null);
           }}
         />
-      )}
-
-      {showReport && (
-        <KPIReportModal kpis={kpis} team={team} onClose={() => setShowReport(false)} />
       )}
     </div>
   );

@@ -8,6 +8,7 @@ import RichEditor from "../components/RichEditor";
 import { organizationApi } from "../api/organizationApi";
 import { userApi } from "../api/userApi";
 import { rockApi } from "../api/rockApi";
+import { projectApi } from "../api/projectApi";
 import { RockIconDisplay } from "../utils/rockIcons.jsx";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -1261,7 +1262,7 @@ function OrgChartTab({ canManage }) {
 
 // ─── Objectives ───────────────────────────────────────────────────────────────
 
-const OBJ_DEFAULTS = { title: "", description: "", status: "active", progress: 0, due_date: "", owner_id: "" };
+const OBJ_DEFAULTS = { title: "", description: "", status: "active", progress: 0, due_date: "", owner_id: "", project_id: "" };
 
 function ObjectiveProgressCircle({ progress }) {
   const r = 13;
@@ -1281,7 +1282,7 @@ function ObjectiveProgressCircle({ progress }) {
   );
 }
 
-function ObjectiveModal({ editing, form, setForm, onSave, onClose, saving, users }) {
+function ObjectiveModal({ editing, form, setForm, onSave, onClose, saving, users, projects }) {
   function handleSubmit(e) {
     e.preventDefault();
     if (!form.title.trim()) return;
@@ -1330,6 +1331,23 @@ function ObjectiveModal({ editing, form, setForm, onSave, onClose, saving, users
             {/* Right: Settings */}
             <div className="space-y-5 p-5">
               <p className="text-sm font-semibold text-slate-800">Settings</p>
+
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold text-slate-500">Project</label>
+                <div className="relative">
+                  <select
+                    value={form.project_id}
+                    onChange={(e) => setForm({ ...form, project_id: e.target.value })}
+                    className={`w-full appearance-none rounded-xl border border-slate-200 px-3 py-2.5 text-sm focus:outline-none ${form.project_id ? "text-slate-900" : "text-slate-400"}`}
+                  >
+                    <option value="">No project</option>
+                    {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </select>
+                  <svg className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 011.06 0L10 11.94l3.72-3.72a.75.75 0 111.06 1.06l-4.25 4.25a.75.75 0 01-1.06 0L5.22 9.28a.75.75 0 010-1.06z" clipRule="evenodd" />
+                  </svg>
+                </div>
+              </div>
 
               <div>
                 <label className="mb-1.5 block text-xs font-semibold text-slate-500">Assignee</label>
@@ -1426,6 +1444,7 @@ const ROCK_STATUS_CFG = {
 function ObjectivesTab({ canManage }) {
   const [objectives, setObjectives] = useState([]);
   const [users, setUsers] = useState([]);
+  const [projects, setProjects] = useState([]);
   const [rocks, setRocks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("active");
@@ -1450,14 +1469,16 @@ function ObjectivesTab({ canManage }) {
   async function load() {
     try {
       setLoading(true);
-      const [objs, us, rs] = await Promise.all([
+      const [objs, us, rs, ps] = await Promise.all([
         organizationApi.listObjectives(),
         userApi.list().catch(() => []),
         organizationApi.listObjectiveRocks().catch(() => []),
+        projectApi.list().catch(() => []),
       ]);
       setObjectives(Array.isArray(objs) ? objs : []);
       setUsers(Array.isArray(us) ? us : []);
       setRocks(Array.isArray(rs) ? rs : []);
+      setProjects(Array.isArray(ps) ? ps : []);
     } catch {
       toast.error("Failed to load objectives.");
     } finally {
@@ -1480,6 +1501,7 @@ function ObjectivesTab({ canManage }) {
       progress: obj.progress,
       due_date: obj.due_date || "",
       owner_id: obj.owner_id || "",
+      project_id: obj.project_id || "",
     });
     setShowModal(true);
   }
@@ -1492,6 +1514,7 @@ function ObjectivesTab({ canManage }) {
       progress: Number(formData.progress),
       due_date: formData.due_date || null,
       owner_id: formData.owner_id ? Number(formData.owner_id) : null,
+      project_id: formData.project_id ? Number(formData.project_id) : null,
     };
     try {
       if (editing) {
@@ -1504,8 +1527,8 @@ function ObjectivesTab({ canManage }) {
         toast.success("Objective created.");
       }
       setShowModal(false);
-    } catch {
-      toast.error("Failed to save objective.");
+    } catch (err) {
+      toast.error(err.message || "Failed to save objective.");
     } finally {
       setSaving(false);
     }
@@ -1646,6 +1669,11 @@ function ObjectivesTab({ canManage }) {
                     <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm0-2a6 6 0 100-12 6 6 0 000 12zm0-2a4 4 0 100-8 4 4 0 000 8zm0-2a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
                   </svg>
                   <span className="flex-1 truncate text-sm font-medium text-slate-900">{obj.title}</span>
+                  {obj.project && (
+                    <span className="shrink-0 rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-600" title={`Project: ${obj.project.name}`}>
+                      {obj.project.name}
+                    </span>
+                  )}
                   <span className="shrink-0 text-xs text-slate-400">
                     {totalMilestones === 0 ? "No milestones" : `${doneMilestones}/${totalMilestones} done`}
                   </span>
@@ -1746,6 +1774,7 @@ function ObjectivesTab({ canManage }) {
           onClose={() => setShowModal(false)}
           saving={saving}
           users={users}
+          projects={projects}
         />
       )}
 

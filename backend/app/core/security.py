@@ -141,8 +141,14 @@ def decode_access_token(token: str) -> dict[str, Any] | None:
 def create_refresh_token(
     subject: str,
     expires_delta: timedelta | None = None,
+    org_id: "uuid.UUID | None" = None,
+    org_role: str | None = None,
 ) -> tuple[str, str, int]:
-    """Return (encoded_token, sha256_hash, exp_unix_timestamp)."""
+    """Return (encoded_token, sha256_hash, exp_unix_timestamp).
+
+    org_id/org_role are carried in the refresh token so /token-refresh can
+    re-issue an access token with the same org context.
+    """
     if expires_delta is None:
         expires_delta = timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
 
@@ -157,6 +163,11 @@ def create_refresh_token(
         "jti": str(uuid.uuid4()),
         "type": "refresh",
     }
+
+    if org_id is not None:
+        payload["org_id"] = str(org_id)
+    if org_role is not None:
+        payload["org_role"] = org_role
 
     token = jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
     token_hash = hash_token(token)

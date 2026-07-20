@@ -43,6 +43,7 @@ class ObjectiveCreate(BaseModel):
     progress: int = Field(default=0, ge=0, le=100)
     due_date: date | None = None
     owner_id: int | None = None
+    project_id: int | None = None
 
 
 class ObjectiveUpdate(BaseModel):
@@ -52,12 +53,19 @@ class ObjectiveUpdate(BaseModel):
     progress: int | None = Field(default=None, ge=0, le=100)
     due_date: date | None = None
     owner_id: int | None = None
+    project_id: int | None = None
 
 
 class ObjectiveOwnerRead(BaseModel):
     id: int
     full_name: str
     email: str
+    model_config = {"from_attributes": True}
+
+
+class ObjectiveProjectRead(BaseModel):
+    id: int
+    name: str
     model_config = {"from_attributes": True}
 
 
@@ -69,10 +77,12 @@ class ObjectiveRead(BaseModel):
     progress: int
     due_date: date | None
     owner_id: int | None
+    project_id: int | None
     created_by_id: int | None
     created_at: datetime
     updated_at: datetime
     owner: ObjectiveOwnerRead | None = None
+    project: ObjectiveProjectRead | None = None
 
     model_config = {"from_attributes": True}
 
