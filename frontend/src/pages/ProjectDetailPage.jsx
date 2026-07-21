@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import toast from "react-hot-toast";
 
 import { projectApi } from "../api/projectApi";
 import { taskApi } from "../api/taskApi";
 import { userApi } from "../api/userApi";
 import { teamApi } from "../api/teamApi";
+import { reportApi } from "../api/reportApi";
 import { useAuth } from "../context/AuthContext";
 
 const STATUS_OPTIONS = [
@@ -78,6 +79,7 @@ function ThreeDotsIcon() {
 
 export default function ProjectDetailPage() {
   const { projectId } = useParams();
+  const navigate = useNavigate();
   const { user } = useAuth();
 
   const [activeTab, setActiveTab] = useState("overview");
@@ -86,6 +88,8 @@ export default function ProjectDetailPage() {
   const [tasks, setTasks] = useState([]);
   const [users, setUsers] = useState([]);
   const [teams, setTeams] = useState([]);
+  const [reports, setReports] = useState([]);
+  const [isLoadingReports, setIsLoadingReports] = useState(false);
 
   const [formData, setFormData] = useState(initialForm);
   const [editingTaskId, setEditingTaskId] = useState(null);
@@ -225,6 +229,37 @@ export default function ProjectDetailPage() {
     setActiveTab("overview");
   }, [projectId, canManageTasks]);
 
+  useEffect(() => {
+    if (activeTab !== "reports") return;
+
+    async function loadReports() {
+      try {
+        setIsLoadingReports(true);
+        const data = await reportApi.list({ project_id: projectId });
+        setReports(data);
+      } catch (err) {
+        toast.error(err.message || "Failed to load reports.");
+      } finally {
+        setIsLoadingReports(false);
+      }
+    }
+
+    loadReports();
+  }, [activeTab, projectId]);
+
+  async function handleCreateReport() {
+    try {
+      const created = await reportApi.create({
+        project_id: Number(projectId),
+        report_type: "monthly",
+        title: `${project?.name || "Project"} - Monthly Project Report`,
+      });
+      navigate(`/reports/${created.id}/edit`);
+    } catch (err) {
+      toast.error(err.message || "Failed to create report.");
+    }
+  }
+
   function handleChange(event) {
     const { name, value } = event.target;
 
@@ -281,9 +316,10 @@ export default function ProjectDetailPage() {
 
       const payload = {
         name: formData.name,
-        start_date: formData.start_date,
-        due_date: formData.due_date,
-        assignee_id: formData.assignee_id ? Number(formData.assignee_id) : null,
+        start_date: formData.start_date || null,
+        due_date: formData.due_date || null,
+        // New tasks are created unassigned; assignment happens later (edit).
+        assignee_id: isEditing && formData.assignee_id ? Number(formData.assignee_id) : null,
         project_id: Number(projectId),
         team_id: formData.team_id ? Number(formData.team_id) : null,
         status: formData.status,
@@ -480,7 +516,7 @@ export default function ProjectDetailPage() {
 
       <div className="mb-6 border-b border-slate-200">
         <nav className="flex gap-6 overflow-x-auto">
-          {["overview", "list", "board", "calendar"].map((tab) => (
+          {["overview", "list", "board", "calendar", "reports"].map((tab) => (
             <button
               key={tab}
               type="button"
@@ -1389,6 +1425,50 @@ export default function ProjectDetailPage() {
             </div>
           </section>
         ) : null}
+
+        {activeTab === "reports" ? (
+          <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-slate-900">Project Reports</h2>
+              {canManageTasks ? (
+                <button
+                  type="button"
+                  onClick={handleCreateReport}
+                  className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+                >
+                  + New Report
+                </button>
+              ) : null}
+            </div>
+
+            {isLoadingReports ? (
+              <p className="text-sm text-slate-500">Loading reports...</p>
+            ) : reports.length === 0 ? (
+              <p className="rounded-xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-500">
+                No reports yet for this project.
+              </p>
+            ) : (
+              <ul className="divide-y divide-slate-100">
+                {reports.map((report) => (
+                  <li key={report.id} className="flex items-center justify-between py-3">
+                    <div>
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/reports/${report.id}/edit`)}
+                        className="font-medium text-slate-900 hover:underline"
+                      >
+                        {report.title}
+                      </button>
+                      <p className="text-xs text-slate-500 capitalize">
+                        {report.report_type} · {report.status} · v{report.version}
+                      </p>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        ) : null}
       </main>
 
       {canManageTasks && isTaskModalOpen ? (
@@ -1450,7 +1530,6 @@ export default function ProjectDetailPage() {
                     type="date"
                     value={formData.start_date}
                     onChange={handleChange}
-                    required
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                   />
                 </div>
@@ -1465,33 +1544,35 @@ export default function ProjectDetailPage() {
                     type="date"
                     value={formData.due_date}
                     onChange={handleChange}
-                    required
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                   />
                 </div>
               </div>
 
-              <div>
-                <label className="mb-1 block text-sm font-medium text-slate-700">
-                  Assignee
-                </label>
+              {/* Assignee is set later, on edit — new tasks are created
+                  unassigned so they land in the team's To-Do list. */}
+              {isEditing && (
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    Assignee
+                  </label>
 
-                <select
-                  name="assignee_id"
-                  value={formData.assignee_id}
-                  onChange={handleChange}
-                  required
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                >
-                  <option value="">Select assignee</option>
+                  <select
+                    name="assignee_id"
+                    value={formData.assignee_id}
+                    onChange={handleChange}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  >
+                    <option value="">Select assignee</option>
 
-                  {assignees.map((assignee) => (
-                    <option key={assignee.id} value={assignee.id}>
-                      {assignee.full_name} — {assignee.role}
-                    </option>
-                  ))}
-                </select>
-              </div>
+                    {assignees.map((assignee) => (
+                      <option key={assignee.id} value={assignee.id}>
+                        {assignee.full_name} — {assignee.role}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               <div>
                 <label className="mb-1 block text-sm font-medium text-slate-700">

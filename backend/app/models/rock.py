@@ -59,6 +59,13 @@ class Milestone(Base):
     owner_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
 
+    # Report-module timeline fields (planned vs. actual vs. forecast dates)
+    planned_start_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    planned_end_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    actual_start_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    actual_end_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    forecast_end_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+
     rock = relationship("Rock", back_populates="milestones")
     owner = relationship("User", foreign_keys=[owner_id], lazy="selectin")
 

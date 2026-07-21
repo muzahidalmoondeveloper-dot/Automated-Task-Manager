@@ -92,6 +92,10 @@ class Settings(BaseSettings):
     CELERY_BROKER_URL: str | None = None
     CELERY_RESULT_BACKEND: str | None = None
 
+    # ── Media / report storage ──────────────────────────────────────────────
+    MEDIA_ROOT: str = "media"
+    PDF_OUTPUT_DIR: str = "media/reports/pdfs"
+
     model_config = SettingsConfigDict(
         env_file=str(_ENV_FILE),
         env_file_encoding="utf-8",

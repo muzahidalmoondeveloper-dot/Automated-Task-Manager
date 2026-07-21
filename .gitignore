@@ -17,6 +17,9 @@ frontend/dist/
 frontend/node_modules/
 node_modules/
 
+# Generated/uploaded media (report PDFs, logos, signatures)
+backend/media/
+
 # Logs
 *.log
 npm-debug.log*
