@@ -5,6 +5,7 @@ import toast from "react-hot-toast";
 
 import { useAuth } from "../context/AuthContext";
 import RichEditor from "../components/RichEditor";
+import DatePicker from "../components/DatePicker";
 import { organizationApi } from "../api/organizationApi";
 import { userApi } from "../api/userApi";
 import { rockApi } from "../api/rockApi";
@@ -1377,17 +1378,7 @@ function ObjectiveModal({ editing, form, setForm, onSave, onClose, saving, users
 
               <div>
                 <label className="mb-1.5 block text-xs font-semibold text-slate-500">Due date</label>
-                <div className="flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2">
-                  <svg className="h-4 w-4 shrink-0 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
-                    <path fillRule="evenodd" d="M5.75 2a.75.75 0 01.75.75V4h7V2.75a.75.75 0 011.5 0V4h.25A2.75 2.75 0 0118 6.75v8.5A2.75 2.75 0 0115.25 18H4.75A2.75 2.75 0 012 15.25v-8.5A2.75 2.75 0 014.75 4H5V2.75A.75.75 0 015.75 2zm-1 5.5c0-.414.336-.75.75-.75h9a.75.75 0 010 1.5h-9A.75.75 0 014.75 7.5z" clipRule="evenodd" />
-                  </svg>
-                  <input
-                    type="date"
-                    value={form.due_date}
-                    onChange={(e) => setForm({ ...form, due_date: e.target.value })}
-                    className="flex-1 border-none bg-transparent text-sm text-slate-900 outline-none [color-scheme:light] placeholder:text-slate-400"
-                  />
-                </div>
+                <DatePicker value={form.due_date} onChange={(e) => setForm({ ...form, due_date: e.target.value })} />
               </div>
 
               {editing && (

@@ -159,6 +159,7 @@ async def run_daily_ai_task_sync() -> None:
     """
     from app.services.automation_tasks import (
         analyze_yesterday_sources_for_user,
+        resolve_org_id_for_user,
         sync_microsoft_data_for_user,
     )
 
@@ -173,7 +174,15 @@ async def run_daily_ai_task_sync() -> None:
 
             for user in users:
                 try:
-                    integration_repo = IntegrationRepository(db)
+                    org_id = await resolve_org_id_for_user(db, user)
+                    if org_id is None:
+                        logger.info(
+                            "Scheduler: skipping user %s — no organization context.",
+                            user.email,
+                        )
+                        continue
+
+                    integration_repo = IntegrationRepository(db, org_id)
                     microsoft_accounts = await integration_repo.list_accounts_by_provider(
                         user.id, "microsoft"
                     )

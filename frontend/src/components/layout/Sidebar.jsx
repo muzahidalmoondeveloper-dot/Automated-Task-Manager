@@ -74,14 +74,6 @@ function ProjectsIcon() {
   );
 }
 
-function ReportsIcon() {
-  return (
-    <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-      <path fillRule="evenodd" d="M4 2a2 2 0 00-2 2v12a2 2 0 002 2h8a2 2 0 002-2V7.414A2 2 0 0013.414 6L10 2.586A2 2 0 008.586 2H4zm3 8a1 1 0 011-1h.01a1 1 0 110 2H8a1 1 0 01-1-1zm1 3a1 1 0 100 2h4a1 1 0 100-2H8zm4-6a1 1 0 10-2 0v3a1 1 0 102 0V7z" clipRule="evenodd" />
-    </svg>
-  );
-}
-
 function IntegrationsIcon() {
   return (
     <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
@@ -660,13 +652,18 @@ function SidebarContent({
   const canManageProjects =
     user?.role === "owner" || user?.role === "admin" || user?.role === "team_manager";
 
+  const canViewProjects = canManageProjects || user?.role === "project_manager";
+
   const canManageUsers =
     user?.role === "owner" || user?.role === "admin" || user?.role === "team_manager";
 
   const canManageTeams = user?.role === "owner" || user?.role === "admin";
 
   const canViewTeams =
-    user?.role === "owner" || user?.role === "admin" || user?.role === "team_manager";
+    user?.role === "owner" ||
+    user?.role === "admin" ||
+    user?.role === "team_manager" ||
+    user?.role === "project_manager";
 
   const isTeamMember = user?.role === "team_member";
 
@@ -705,7 +702,7 @@ function SidebarContent({
   }, []);
 
   async function loadProjects() {
-    if (!canManageProjects) {
+    if (!canViewProjects) {
       setProjects([]);
       return;
     }
@@ -764,7 +761,7 @@ function SidebarContent({
     return () => {
       window.removeEventListener("projects-changed", handleProjectsChanged);
     };
-  }, [canManageProjects]);
+  }, [canViewProjects]);
 
   function handleNavigateProfile() {
     setProfileOpen(false);
@@ -950,7 +947,7 @@ function SidebarContent({
             </>
           ) : null}
 
-          {canManageProjects ? (
+          {canViewProjects ? (
             <>
               <SectionTitle collapsed={collapsed}>Projects</SectionTitle>
 
@@ -986,14 +983,6 @@ function SidebarContent({
                   />
                 ))}
               </div>
-
-              <NavItem
-                to="/reports"
-                icon={<ReportsIcon />}
-                label="Reports"
-                collapsed={collapsed}
-                onClick={handleClickNav}
-              />
             </>
           ) : null}
 

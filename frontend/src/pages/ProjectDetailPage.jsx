@@ -8,6 +8,7 @@ import { userApi } from "../api/userApi";
 import { teamApi } from "../api/teamApi";
 import { reportApi } from "../api/reportApi";
 import { useAuth } from "../context/AuthContext";
+import DatePicker from "../components/DatePicker";
 
 const STATUS_OPTIONS = [
   { value: "todo", label: "Todo" },
@@ -90,6 +91,13 @@ export default function ProjectDetailPage() {
   const [teams, setTeams] = useState([]);
   const [reports, setReports] = useState([]);
   const [isLoadingReports, setIsLoadingReports] = useState(false);
+  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+  const [isCreatingReport, setIsCreatingReport] = useState(false);
+  const [reportForm, setReportForm] = useState({ report_type: "monthly", title: "", period_start: "", period_end: "" });
+
+  const [pmAssignments, setPmAssignments] = useState([]);
+  const [isLoadingPmAssignments, setIsLoadingPmAssignments] = useState(false);
+  const [selectedPmUserId, setSelectedPmUserId] = useState("");
 
   const [formData, setFormData] = useState(initialForm);
   const [editingTaskId, setEditingTaskId] = useState(null);
@@ -113,6 +121,12 @@ export default function ProjectDetailPage() {
 
   const isEditing = editingTaskId !== null;
   const canManageTasks = user?.role === "owner" || user?.role === "admin" || user?.role === "team_manager";
+  // Project Managers can create tasks under their assigned project(s) and set
+  // the team, but cannot edit/delete/change status on tasks (backend-enforced
+  // create-only scope) — kept as a separate flag so those controls stay
+  // manager-only below.
+  const canCreateTasks = canManageTasks || user?.role === "project_manager";
+  const canManageProjects = user?.role === "owner" || user?.role === "admin" || user?.role === "team_manager";
 
   const assignees = useMemo(() => {
     return users.filter((item) =>
@@ -194,7 +208,7 @@ export default function ProjectDetailPage() {
         projectApi.listItems(projectId),
       ];
 
-      if (canManageTasks) {
+      if (canCreateTasks) {
         requests.push(userApi.list());
         requests.push(teamApi.list());
       }
@@ -211,7 +225,7 @@ export default function ProjectDetailPage() {
       setRockKpis(result[2]?.rock_kpis || []);
       setProjectTeams(result[2]?.teams || []);
 
-      if (canManageTasks) {
+      if (canCreateTasks) {
         setUsers(result[3]);
         setTeams(result[4]);
       }
@@ -227,7 +241,7 @@ export default function ProjectDetailPage() {
     loadData();
     resetForm();
     setActiveTab("overview");
-  }, [projectId, canManageTasks]);
+  }, [projectId, canCreateTasks]);
 
   useEffect(() => {
     if (activeTab !== "reports") return;
@@ -247,16 +261,88 @@ export default function ProjectDetailPage() {
     loadReports();
   }, [activeTab, projectId]);
 
-  async function handleCreateReport() {
+  function openCreateReportModal() {
+    setReportForm({
+      report_type: "monthly",
+      title: `${project?.name || "Project"} - Monthly Project Report`,
+      period_start: "",
+      period_end: "",
+    });
+    setIsReportModalOpen(true);
+  }
+
+  function handleReportFormChange(event) {
+    const { name, value } = event.target;
+    setReportForm((current) => ({ ...current, [name]: value }));
+  }
+
+  async function handleCreateReport(event) {
+    event.preventDefault();
     try {
+      setIsCreatingReport(true);
       const created = await reportApi.create({
         project_id: Number(projectId),
-        report_type: "monthly",
-        title: `${project?.name || "Project"} - Monthly Project Report`,
+        report_type: reportForm.report_type,
+        title: reportForm.title,
+        period_start: reportForm.period_start || null,
+        period_end: reportForm.period_end || null,
       });
       navigate(`/reports/${created.id}/edit`);
     } catch (err) {
       toast.error(err.message || "Failed to create report.");
+    } finally {
+      setIsCreatingReport(false);
+    }
+  }
+
+  async function handleDeleteReport(report) {
+    if (!window.confirm(`Delete "${report.title}"? This cannot be undone.`)) return;
+    try {
+      await reportApi.remove(report.id);
+      setReports((current) => current.filter((r) => r.id !== report.id));
+      toast.success("Report deleted.");
+    } catch (err) {
+      toast.error(err.message || "Failed to delete report.");
+    }
+  }
+
+  async function loadPmAssignments() {
+    try {
+      setIsLoadingPmAssignments(true);
+      const data = await projectApi.listMembers(projectId);
+      setPmAssignments(data);
+    } catch (err) {
+      toast.error(err.message || "Failed to load assigned project managers.");
+    } finally {
+      setIsLoadingPmAssignments(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!canManageProjects) return;
+    loadPmAssignments();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, canManageProjects]);
+
+  async function handleAddPmAssignment() {
+    if (!selectedPmUserId) return;
+    try {
+      await projectApi.addMember(projectId, Number(selectedPmUserId));
+      setSelectedPmUserId("");
+      await loadPmAssignments();
+      toast.success("Project Manager assigned.");
+    } catch (err) {
+      toast.error(err.message || "Failed to assign Project Manager.");
+    }
+  }
+
+  async function handleRemovePmAssignment(userId) {
+    try {
+      await projectApi.removeMember(projectId, userId);
+      setPmAssignments((current) => current.filter((m) => m.user_id !== userId));
+      toast.success("Project Manager unassigned.");
+    } catch (err) {
+      toast.error(err.message || "Failed to unassign Project Manager.");
     }
   }
 
@@ -503,7 +589,7 @@ export default function ProjectDetailPage() {
           </p>
         </div>
 
-        {canManageTasks ? (
+        {canCreateTasks ? (
           <button
             type="button"
             onClick={openCreateModal}
@@ -1042,6 +1128,73 @@ export default function ProjectDetailPage() {
               </div>
             )}
 
+            {/* ── Project Manager assignment (Owner/Admin/Team Manager only) ── */}
+            {canManageProjects ? (
+              <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                <h2 className="text-base font-semibold text-slate-900">Project Manager</h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Project Managers assigned here can view this project, create tasks under it, and
+                  assign those tasks to any team.
+                </p>
+
+                {isLoadingPmAssignments ? (
+                  <p className="mt-4 text-sm text-slate-500">Loading...</p>
+                ) : (
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {pmAssignments.length === 0 ? (
+                      <p className="text-sm text-slate-400">No Project Manager assigned yet.</p>
+                    ) : (
+                      pmAssignments.map((member) => (
+                        <span
+                          key={member.id}
+                          className="flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-700"
+                        >
+                          {member.full_name || member.email}
+                          <button
+                            type="button"
+                            onClick={() => handleRemovePmAssignment(member.user_id)}
+                            className="text-slate-400 hover:text-red-600"
+                            title="Remove"
+                          >
+                            ✕
+                          </button>
+                        </span>
+                      ))
+                    )}
+                  </div>
+                )}
+
+                <div className="mt-4 flex gap-2">
+                  <select
+                    value={selectedPmUserId}
+                    onChange={(event) => setSelectedPmUserId(event.target.value)}
+                    className="w-full max-w-xs rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  >
+                    <option value="">Select a Project Manager to assign</option>
+                    {users
+                      .filter(
+                        (u) =>
+                          u.role === "project_manager" &&
+                          !pmAssignments.some((m) => m.user_id === u.id)
+                      )
+                      .map((u) => (
+                        <option key={u.id} value={u.id}>
+                          {u.full_name || u.email}
+                        </option>
+                      ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={handleAddPmAssignment}
+                    disabled={!selectedPmUserId}
+                    className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+                  >
+                    Assign
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
           </section>
         ) : null}
 
@@ -1433,10 +1586,10 @@ export default function ProjectDetailPage() {
               {canManageTasks ? (
                 <button
                   type="button"
-                  onClick={handleCreateReport}
+                  onClick={openCreateReportModal}
                   className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
                 >
-                  + New Report
+                  Create Report
                 </button>
               ) : null}
             </div>
@@ -1463,6 +1616,15 @@ export default function ProjectDetailPage() {
                         {report.report_type} · {report.status} · v{report.version}
                       </p>
                     </div>
+                    {canManageTasks && report.status === "draft" ? (
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteReport(report)}
+                        className="text-xs font-semibold text-red-600 hover:underline"
+                      >
+                        Delete
+                      </button>
+                    ) : null}
                   </li>
                 ))}
               </ul>
@@ -1471,7 +1633,7 @@ export default function ProjectDetailPage() {
         ) : null}
       </main>
 
-      {canManageTasks && isTaskModalOpen ? (
+      {canCreateTasks && isTaskModalOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 px-4 py-6">
           <div className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl bg-white p-6 shadow-xl">
             <div className="mb-6 flex items-center justify-between">
@@ -1525,13 +1687,7 @@ export default function ProjectDetailPage() {
                     Start date
                   </label>
 
-                  <input
-                    name="start_date"
-                    type="date"
-                    value={formData.start_date}
-                    onChange={handleChange}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  />
+                  <DatePicker name="start_date" value={formData.start_date} onChange={handleChange} />
                 </div>
 
                 <div>
@@ -1539,13 +1695,7 @@ export default function ProjectDetailPage() {
                     Due date
                   </label>
 
-                  <input
-                    name="due_date"
-                    type="date"
-                    value={formData.due_date}
-                    onChange={handleChange}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  />
+                  <DatePicker name="due_date" value={formData.due_date} onChange={handleChange} />
                 </div>
               </div>
 
@@ -1640,6 +1790,83 @@ export default function ProjectDetailPage() {
                     : isEditing
                     ? "Update Task"
                     : "Create Task"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
+      {isReportModalOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 px-4 py-6">
+          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-xl">
+            <div className="mb-6 flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-semibold text-slate-900">Create Report</h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  This report will be created under <span className="font-medium text-slate-700">{project.name}</span>.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsReportModalOpen(false)}
+                className="rounded-lg px-3 py-2 text-sm font-semibold text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateReport} className="space-y-5">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-slate-700">Report Type</label>
+                <select
+                  name="report_type"
+                  value={reportForm.report_type}
+                  onChange={handleReportFormChange}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                >
+                  <option value="weekly">Weekly Project Report</option>
+                  <option value="monthly">Monthly Project Report</option>
+                  <option value="client">Client Project Report</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-slate-700">Report Title</label>
+                <input
+                  name="title"
+                  value={reportForm.title}
+                  onChange={handleReportFormChange}
+                  required
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                />
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Period Start</label>
+                  <DatePicker name="period_start" value={reportForm.period_start} onChange={handleReportFormChange} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Period End</label>
+                  <DatePicker name="period_end" value={reportForm.period_end} onChange={handleReportFormChange} />
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsReportModalOpen(false)}
+                  className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isCreatingReport}
+                  className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+                >
+                  {isCreatingReport ? "Creating..." : "Create Report"}
                 </button>
               </div>
             </form>

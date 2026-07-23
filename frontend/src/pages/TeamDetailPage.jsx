@@ -2,6 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import toast from "react-hot-toast";
 import DOMPurify from "dompurify";
+import LinkedItemsHoverIcon from "../components/LinkedItemsHoverIcon";
+import EntityDetailPanel from "../components/EntityDetailPanel";
+import DatePicker from "../components/DatePicker";
 
 import { teamApi } from "../api/teamApi";
 import { taskApi } from "../api/taskApi";
@@ -495,6 +498,7 @@ function NewsTab({ team, canManage }) {
   const [saving, setSaving] = useState(false);
   const [openMenuId, setOpenMenuId] = useState(null);
   const [viewItem, setViewItem] = useState(null);
+  const [detailItem, setDetailItem] = useState(null);
 
   useEffect(() => {
     if (!team?.id) return;
@@ -646,7 +650,10 @@ function NewsTab({ team, canManage }) {
                 </div>
                 {/* Title + plain-text preview */}
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-slate-900">{item.title}</p>
+                  <p className="flex items-center gap-1.5 truncate text-sm font-medium text-slate-900">
+                    <span className="truncate">{item.title}</span>
+                    <LinkedItemsHoverIcon links={item.links} />
+                  </p>
                   {item.body && (
                     <p className="truncate text-xs text-slate-400">{stripHtml(item.body)}</p>
                   )}
@@ -660,6 +667,15 @@ function NewsTab({ team, canManage }) {
                 )}
                 {/* Relative time */}
                 <span className="shrink-0 text-xs text-slate-400">{formatRelative(item.created_at)}</span>
+                {/* Notes & details */}
+                <button type="button"
+                  onClick={(e) => { e.stopPropagation(); setDetailItem(item); }}
+                  title="Notes & details"
+                  className="rounded-lg p-1 text-slate-400 opacity-0 transition-opacity hover:bg-slate-100 hover:text-slate-600 group-hover:opacity-100">
+                  <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M10 2c-2.236 0-4.43.18-6.57.524C1.993 2.755 1 4.014 1 5.426v5.148c0 1.413.993 2.67 2.43 2.902 1.168.188 2.352.327 3.55.414.28.02.521.18.642.413l1.713 3.293a.75.75 0 001.33 0l1.713-3.293a.647.647 0 01.642-.413 41.102 41.102 0 003.55-.414c1.437-.231 2.43-1.49 2.43-2.902V5.426c0-1.413-.993-2.67-2.43-2.902A41.289 41.289 0 0010 2z" clipRule="evenodd" />
+                  </svg>
+                </button>
                 {/* Three-dots */}
                 {canManage && (
                   <div className="relative opacity-0 transition-opacity group-hover:opacity-100"
@@ -721,6 +737,19 @@ function NewsTab({ team, canManage }) {
           onClose={() => { setShowModal(false); setEditing(null); }}
           onSave={handleSave}
           saving={saving}
+        />
+      )}
+
+      {detailItem && (
+        <EntityDetailPanel
+          entityType="news"
+          entityId={detailItem.id}
+          title={detailItem.title}
+          statusLabel={detailItem.status === "archived" ? "Archived" : "Active"}
+          createdAt={detailItem.created_at}
+          ownerUser={detailItem.owner}
+          description={stripHtml(detailItem.body)}
+          onClose={() => setDetailItem(null)}
         />
       )}
     </div>
@@ -872,13 +901,11 @@ function CreateTodoModal({ team, users, editing, onClose, onSave, saving }) {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="mb-1.5 block text-xs font-semibold text-slate-500">Start Date</label>
-                <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-700 focus:border-slate-400 focus:outline-none" />
+                <DatePicker value={startDate} onChange={(e) => setStartDate(e.target.value)} />
               </div>
               <div>
                 <label className="mb-1.5 block text-xs font-semibold text-slate-500">Due Date</label>
-                <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-700 focus:border-slate-400 focus:outline-none" />
+                <DatePicker value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
               </div>
             </div>
 

@@ -10,6 +10,7 @@ const ROLE_OPTIONS = [
   { value: "owner", label: "Owner" },
   { value: "admin", label: "Admin" },
   { value: "team_manager", label: "Team Manager" },
+  { value: "project_manager", label: "Project Manager" },
   { value: "team_member", label: "Team Member" },
 ];
 

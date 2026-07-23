@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth_errors import AppException, ErrorDef
 from app.core.database import get_db
-from app.core.org_roles import TEAM_MEMBER
+from app.core.org_roles import PROJECT_MANAGER, TEAM_MEMBER
 from app.core.tenant import TenantContext, get_tenant_context, require_org_admin, require_org_manager
 from app.models.notification import Notification
 from app.models.task import Task
@@ -131,13 +131,19 @@ async def list_tasks(
 async def create_task(
     payload: TaskCreate,
     background_tasks: BackgroundTasks,
-    tenant: TenantContext = Depends(require_org_manager),
+    tenant: TenantContext = Depends(get_tenant_context),
     db: AsyncSession = Depends(get_db),
 ):
     user_repo = UserRepository(db)
     project_repo = ProjectRepository(db, tenant.organization_id)
     team_repo = TeamRepository(db, tenant.organization_id)
     task_repo = TaskRepository(db, tenant.organization_id)
+
+    if not tenant.is_manager_or_above:
+        if tenant.org_role != PROJECT_MANAGER:
+            raise HTTPException(status_code=http_status.HTTP_403_FORBIDDEN, detail="You are not allowed to create tasks.")
+        if payload.project_id is None or not await project_repo.is_member(payload.project_id, tenant.user.id):
+            raise HTTPException(status_code=http_status.HTTP_403_FORBIDDEN, detail="You can only create tasks under a project you are assigned to.")
 
     if payload.assignee_id is not None:
         if await user_repo.get_by_id(payload.assignee_id) is None:

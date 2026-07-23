@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import DOMPurify from "dompurify";
 import toast from "react-hot-toast";
+import LinkedItemsHoverIcon from "../components/LinkedItemsHoverIcon";
+import EntityDetailPanel from "../components/EntityDetailPanel";
 import { issueApi } from "../api/issueApi";
 import { rockApi } from "../api/rockApi";
 import { kpiApi } from "../api/kpiApi";
@@ -409,6 +411,7 @@ function IssueModal({ team, users, teams, projects, editing, onClose, onSave, sa
 // ─── Issue row ────────────────────────────────────────────────────────────────
 
 function IssueRow({ issue, canManage, onEdit, onDelete, onArchive }) {
+  const [detailOpen, setDetailOpen] = useState(false);
   const preview = stripHtml(issue.description);
   const assignee = issue.assignee;
 
@@ -421,7 +424,10 @@ function IssueRow({ issue, canManage, onEdit, onDelete, onArchive }) {
 
       {/* Content */}
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-semibold text-slate-900 leading-snug">{issue.title}</p>
+        <p className="flex items-center gap-1.5 text-sm font-semibold text-slate-900 leading-snug">
+          {issue.title}
+          <LinkedItemsHoverIcon links={issue.links} />
+        </p>
         {preview && (
           <p className="mt-0.5 line-clamp-2 text-xs text-slate-400">{preview}</p>
         )}
@@ -444,6 +450,16 @@ function IssueRow({ issue, canManage, onEdit, onDelete, onArchive }) {
       )}
 
       {/* Actions */}
+      <div className="flex shrink-0 items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity mt-0.5">
+        <button type="button" onClick={() => setDetailOpen(true)} title="Notes & details"
+          className="rounded p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors">
+          <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+            <path fillRule="evenodd" d="M10 2c-2.236 0-4.43.18-6.57.524C1.993 2.755 1 4.014 1 5.426v5.148c0 1.413.993 2.67 2.43 2.902 1.168.188 2.352.327 3.55.414.28.02.521.18.642.413l1.713 3.293a.75.75 0 001.33 0l1.713-3.293a.647.647 0 01.642-.413 41.102 41.102 0 003.55-.414c1.437-.231 2.43-1.49 2.43-2.902V5.426c0-1.413-.993-2.67-2.43-2.902A41.289 41.289 0 0010 2z" clipRule="evenodd" />
+          </svg>
+        </button>
+      </div>
+
+      {/* Manager actions */}
       {canManage && (
         <div className="flex shrink-0 items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity mt-0.5">
           {issue.timeframe !== "archived" && (
@@ -467,6 +483,20 @@ function IssueRow({ issue, canManage, onEdit, onDelete, onArchive }) {
             </svg>
           </button>
         </div>
+      )}
+
+      {detailOpen && (
+        <EntityDetailPanel
+          entityType="issue"
+          entityId={issue.id}
+          title={issue.title}
+          statusLabel={issue.timeframe === "archived" ? "Archived" : issue.status ? issue.status.replace("_", " ") : "Open"}
+          createdAt={issue.created_at}
+          ownerUser={issue.assignee}
+          ownerLabel="Assignee"
+          description={preview}
+          onClose={() => setDetailOpen(false)}
+        />
       )}
     </div>
   );

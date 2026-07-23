@@ -7,6 +7,7 @@ import { projectApi } from "../api/projectApi";
 import { teamApi } from "../api/teamApi";
 import { useAuth } from "../context/AuthContext";
 import CelebrationOverlay from "../components/CelebrationOverlay";
+import DatePicker from "../components/DatePicker";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -1160,13 +1161,11 @@ export default function TasksPage() {
                     </div>
                     <div>
                       <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">Due From</label>
-                      <input type="date" value={allFilters.dueDateFrom} onChange={(e) => setAllFilter("dueDateFrom", e.target.value)}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 outline-none focus:border-slate-900" />
+                      <DatePicker value={allFilters.dueDateFrom} onChange={(e) => setAllFilter("dueDateFrom", e.target.value)} />
                     </div>
                     <div>
                       <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">Due To</label>
-                      <input type="date" value={allFilters.dueDateTo} onChange={(e) => setAllFilter("dueDateTo", e.target.value)}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 outline-none focus:border-slate-900" />
+                      <DatePicker value={allFilters.dueDateTo} onChange={(e) => setAllFilter("dueDateTo", e.target.value)} />
                     </div>
                   </>
                 }
@@ -1456,13 +1455,11 @@ export default function TasksPage() {
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
                   <label className="mb-1 block text-sm font-medium text-slate-700">Start date</label>
-                  <input name="start_date" type="date" value={formData.start_date} onChange={handleChange}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                  <DatePicker name="start_date" value={formData.start_date} onChange={handleChange} />
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-slate-700">Due date</label>
-                  <input name="due_date" type="date" value={formData.due_date} onChange={handleChange}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                  <DatePicker name="due_date" value={formData.due_date} onChange={handleChange} />
                 </div>
               </div>
 

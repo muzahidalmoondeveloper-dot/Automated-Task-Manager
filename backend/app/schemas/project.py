@@ -44,3 +44,18 @@ class ProjectRead(BaseModel):
     model_config = {
         "from_attributes": True,
     }
+
+
+class ProjectMemberAssign(BaseModel):
+    user_id: int
+
+
+class ProjectMemberOut(BaseModel):
+    id: int
+    user_id: int
+    full_name: str | None = None
+    email: str
+
+    model_config = {
+        "from_attributes": True,
+    }

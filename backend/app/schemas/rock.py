@@ -48,6 +48,7 @@ class ProjectRef(BaseModel):
 class MilestoneUpsert(BaseModel):
     id: Optional[int] = None
     title: str
+    description: Optional[str] = None
     status: str = "pending"
     due_date: Optional[date] = None
     owner_id: Optional[int] = None
@@ -57,6 +58,7 @@ class MilestoneUpsert(BaseModel):
 class MilestoneOut(BaseModel):
     id: int
     title: str
+    description: Optional[str] = None
     status: str
     due_date: Optional[date] = None
     sort_order: int

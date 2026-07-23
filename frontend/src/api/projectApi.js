@@ -24,4 +24,16 @@ export const projectApi = {
   delete(id) {
     return apiClient.delete(`/projects/${id}`);
   },
+
+  listMembers(id) {
+    return apiClient.get(`/projects/${id}/members`);
+  },
+
+  addMember(id, userId) {
+    return apiClient.post(`/projects/${id}/members`, { user_id: userId });
+  },
+
+  removeMember(id, userId) {
+    return apiClient.delete(`/projects/${id}/members/${userId}`);
+  },
 };

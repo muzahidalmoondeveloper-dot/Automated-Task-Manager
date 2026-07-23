@@ -5,6 +5,7 @@ import { projectApi } from "../api/projectApi";
 import { teamApi } from "../api/teamApi";
 import { userApi } from "../api/userApi";
 import { taskSuggestionApi } from "../api/taskSuggestionApi";
+import DatePicker from "../components/DatePicker";
 
 function cx(...classes) {
   return classes.filter(Boolean).join(" ");
@@ -852,8 +853,7 @@ export default function TaskSuggestionsPage() {
                     Start Date
                   </label>
 
-                  <input
-                    type="date"
+                  <DatePicker
                     value={getApprovalValue(selectedSuggestion, "start_date")}
                     onChange={(event) =>
                       updateApprovalData(
@@ -862,7 +862,6 @@ export default function TaskSuggestionsPage() {
                         event.target.value
                       )
                     }
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 outline-none focus:border-slate-900"
                   />
                 </div>
 
@@ -871,8 +870,7 @@ export default function TaskSuggestionsPage() {
                     Due Date
                   </label>
 
-                  <input
-                    type="date"
+                  <DatePicker
                     value={getApprovalValue(selectedSuggestion, "due_date")}
                     onChange={(event) =>
                       updateApprovalData(
@@ -881,7 +879,6 @@ export default function TaskSuggestionsPage() {
                         event.target.value
                       )
                     }
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 outline-none focus:border-slate-900"
                   />
                 </div>
               </div>

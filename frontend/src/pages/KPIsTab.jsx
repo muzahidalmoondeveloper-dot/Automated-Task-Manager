@@ -1,10 +1,14 @@
 import { Fragment, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import DOMPurify from "dompurify";
 import RichEditor from "../components/RichEditor";
+import LinkedItemsHoverIcon from "../components/LinkedItemsHoverIcon";
+import EntityDetailPanel from "../components/EntityDetailPanel";
 import toast from "react-hot-toast";
 import { kpiApi } from "../api/kpiApi";
 import { rockApi } from "../api/rockApi";
 import { taskApi } from "../api/taskApi";
+import { issueApi } from "../api/issueApi";
 import { organizationApi } from "../api/organizationApi";
 import { teamApi } from "../api/teamApi";
 import { projectApi } from "../api/projectApi";
@@ -1061,7 +1065,7 @@ function RecordValueModal({ kpi, period, entry, teamId, onClose, onSaved }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 backdrop-blur-sm p-6">
-      <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl">
+      <div className="flex max-h-[90vh] w-full max-w-md flex-col overflow-y-auto rounded-2xl bg-white shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4">
           <h2 className="text-base font-bold text-slate-900">Record KPI value</h2>
@@ -1072,7 +1076,7 @@ function RecordValueModal({ kpi, period, entry, teamId, onClose, onSaved }) {
           </button>
         </div>
 
-        <div className="px-6 space-y-5 pb-2">
+        <div className="px-6 space-y-4 pb-2">
           {/* Period + KPI name */}
           <div className="rounded-xl bg-slate-50 px-4 py-3">
             <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">{period.label}</p>
@@ -1133,9 +1137,9 @@ function RecordValueModal({ kpi, period, entry, teamId, onClose, onSaved }) {
               <span className="text-sm font-semibold text-slate-800">Notes</span>
               <span className="text-xs font-semibold text-slate-400">{notes.length} {notes.length === 1 ? "NOTE" : "NOTES"}</span>
             </div>
-            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-4 h-[220px] overflow-y-auto">
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 max-h-[220px] overflow-y-auto">
               {notes.length === 0 ? (
-                <p className="text-sm text-slate-400 text-center">No notes yet. Capture the first update to get the thread started.</p>
+                <p className="text-sm text-slate-400 text-center py-1.5">No notes yet. Capture the first update to get the thread started.</p>
               ) : (
                 <div className="space-y-4">
                   {notes.map((n, i) => (
@@ -1179,7 +1183,7 @@ function RecordValueModal({ kpi, period, entry, teamId, onClose, onSaved }) {
             </div>
             <textarea value={noteText} onChange={(e) => setNoteText(e.target.value)}
               placeholder={`Add context or assumptions for this ${period.type}'s value`}
-              rows={3}
+              rows={2}
               className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm text-slate-700 placeholder:text-slate-400 outline-none focus:border-slate-400 resize-none" />
             <div className="mt-2 flex justify-end">
               <button type="button" onClick={handleAddNote}
@@ -1227,9 +1231,154 @@ function ValueCell({ value, derivedValue, targetType, onClick }) {
   );
 }
 
+// ─── Quick-create modal (Create Issue / Create To-Do from a KPI) ──────────────
+
+function QuickCreateModal({ heading, placeholder, onCancel, onSubmit, isSaving }) {
+  const [title, setTitle] = useState(placeholder || "");
+
+  function handleSubmit(e) {
+    e.preventDefault();
+    if (!title.trim()) return;
+    onSubmit(title.trim());
+  }
+
+  return createPortal(
+    <div className="fixed inset-0 z-[220] flex items-center justify-center bg-slate-950/40 px-4 backdrop-blur-sm">
+      <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl">
+        <h3 className="mb-4 text-lg font-bold text-slate-900">{heading}</h3>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <input
+            autoFocus
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Title"
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+          />
+          <div className="flex justify-end gap-3">
+            <button type="button" onClick={onCancel} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+              Cancel
+            </button>
+            <button type="submit" disabled={isSaving} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60">
+              {isSaving ? "Creating..." : "Create"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+// ─── KPI row actions menu (portal-positioned so it never scrolls/clips) ───────
+
+function KpiActionsMenu({ kpi, teamId, onEdit, onDelete, onToggleSnooze }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuPos, setMenuPos] = useState(null);
+  const [quickCreate, setQuickCreate] = useState(null); // "issue" | "todo" | null
+  const [isSaving, setIsSaving] = useState(false);
+  const btnRef = useRef(null);
+
+  function openMenu(e) {
+    e.stopPropagation();
+    if (btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      setMenuPos({ top: r.bottom + 4, right: window.innerWidth - r.right });
+    }
+    setMenuOpen((v) => !v);
+  }
+
+  async function handleQuickCreate(title) {
+    try {
+      setIsSaving(true);
+      if (quickCreate === "issue") {
+        await issueApi.create(teamId, {
+          title,
+          links: [{ linked_type: "kpi", linked_id: kpi.id, title: kpi.title }],
+        });
+        toast.success("Issue created.");
+      } else {
+        await taskApi.create({ name: title, team_id: teamId, project_id: kpi.project_id || null });
+        toast.success("To-Do created.");
+      }
+      setQuickCreate(null);
+    } catch (err) {
+      toast.error(err.message || "Failed to create.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  return (
+    <>
+      <button ref={btnRef} type="button" onClick={openMenu} title="More actions"
+        className="rounded p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition-colors">
+        <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+          <path d="M10 3a1.5 1.5 0 110 3 1.5 1.5 0 010-3zM10 8.5a1.5 1.5 0 110 3 1.5 1.5 0 010-3zM11.5 15.5a1.5 1.5 0 10-3 0 1.5 1.5 0 003 0z" />
+        </svg>
+      </button>
+
+      {menuOpen && menuPos && createPortal(
+        <>
+          <div className="fixed inset-0 z-[100]" onClick={() => setMenuOpen(false)} />
+          <div className="fixed z-[101] w-44 rounded-xl border border-slate-200 bg-white py-1 shadow-xl"
+            style={{ top: menuPos.top, right: menuPos.right }}>
+            <button type="button" onClick={() => { setMenuOpen(false); onEdit(kpi); }}
+              className="flex w-full items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">
+              <svg className="h-4 w-4 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
+                <path d="M5.433 13.917l1.262-3.155A4 4 0 017.58 9.42l6.92-6.918a2.121 2.121 0 013 3l-6.92 6.918c-.383.383-.84.685-1.343.886l-3.154 1.262a.5.5 0 01-.65-.65z" />
+              </svg>
+              Edit
+            </button>
+            <button type="button" onClick={() => { setMenuOpen(false); setQuickCreate("issue"); }}
+              className="flex w-full items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">
+              <svg className="h-4 w-4 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+              </svg>
+              Create Issue
+            </button>
+            <button type="button" onClick={() => { setMenuOpen(false); setQuickCreate("todo"); }}
+              className="flex w-full items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">
+              <svg className="h-4 w-4 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
+                <path d="M7 3a1 1 0 000 2h6a1 1 0 100-2H7zM4 7a1 1 0 011-1h10a1 1 0 110 2H5a1 1 0 01-1-1zM2 11a2 2 0 012-2h12a2 2 0 012 2v4a2 2 0 01-2 2H4a2 2 0 01-2-2v-4z" />
+              </svg>
+              Create To-Do
+            </button>
+            <button type="button" onClick={() => { setMenuOpen(false); onToggleSnooze(kpi); }}
+              className="flex w-full items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">
+              <svg className="h-4 w-4 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
+                <path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z" />
+              </svg>
+              {kpi.is_snoozed ? "Unsnooze" : "Snooze"}
+            </button>
+            <button type="button" onClick={() => { setMenuOpen(false); onDelete(kpi); }}
+              className="flex w-full items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50">
+              <svg className="h-4 w-4 text-red-400" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.52.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4z" clipRule="evenodd" />
+              </svg>
+              Delete
+            </button>
+          </div>
+        </>,
+        document.body
+      )}
+
+      {quickCreate && (
+        <QuickCreateModal
+          heading={quickCreate === "issue" ? "Create Issue" : "Create To-Do"}
+          placeholder={`${quickCreate === "issue" ? "Issue" : "To-Do"} from KPI: ${kpi.title}`}
+          isSaving={isSaving}
+          onCancel={() => setQuickCreate(null)}
+          onSubmit={handleQuickCreate}
+        />
+      )}
+    </>
+  );
+}
+
 // ─── KPI row ──────────────────────────────────────────────────────────────────
 
 function KPIRow({ kpi, index, isDragOver, teamId, view, periods, canManage, onEdit, onDelete, onTrend, onEntrySaved, onOpenRecord, onToggleSnooze, onDragStart, onDragOver, onDrop, onDragEnd, onOwnerClick, ownerSelected }) {
+  const [detailOpen, setDetailOpen] = useState(false);
   const isNew = Date.now() - new Date(kpi.created_at).getTime() < 7 * 24 * 60 * 60 * 1000;
 
   const entryMap = {};
@@ -1324,6 +1473,7 @@ function KPIRow({ kpi, index, isDragOver, teamId, view, periods, canManage, onEd
           {status === "snoozed" && (
             <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-400">Snoozed</span>
           )}
+          <LinkedItemsHoverIcon links={kpi.links} />
         </div>
       </td>
       {/* Owner — click toggles this owner in the filter */}
@@ -1371,25 +1521,34 @@ function KPIRow({ kpi, index, isDragOver, teamId, view, periods, canManage, onEd
           />
         </td>
       ))}
-      {/* Actions */}
-      <td className="py-3 pr-4 w-16">
-        {canManage && (
-          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-            <button type="button" onClick={() => onEdit(kpi)} title="Edit KPI"
-              className="rounded p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition-colors">
-              <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                <path d="M5.433 13.917l1.262-3.155A4 4 0 017.58 9.42l6.92-6.918a2.121 2.121 0 013 3l-6.92 6.918c-.383.383-.84.685-1.343.886l-3.154 1.262a.5.5 0 01-.65-.65z" />
-              </svg>
-            </button>
-            <button type="button" onClick={() => onDelete(kpi)} title="Delete KPI"
-              className="rounded p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-500 transition-colors">
-              <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.52.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4z" clipRule="evenodd" />
-              </svg>
-            </button>
-          </div>
-        )}
+      {/* Actions — sticky to the right edge so it stays visible when the
+          wide, period-column table scrolls horizontally. */}
+      <td className="sticky right-0 z-10 w-16 border-l border-slate-100 bg-white py-3 pr-4 group-hover:bg-slate-50">
+        <div className="flex items-center justify-end gap-1">
+          <button type="button" onClick={() => setDetailOpen(true)} title="Notes & details"
+            className="rounded p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition-colors">
+            <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M10 2c-2.236 0-4.43.18-6.57.524C1.993 2.755 1 4.014 1 5.426v5.148c0 1.413.993 2.67 2.43 2.902 1.168.188 2.352.327 3.55.414.28.02.521.18.642.413l1.713 3.293a.75.75 0 001.33 0l1.713-3.293a.647.647 0 01.642-.413 41.102 41.102 0 003.55-.414c1.437-.231 2.43-1.49 2.43-2.902V5.426c0-1.413-.993-2.67-2.43-2.902A41.289 41.289 0 0010 2z" clipRule="evenodd" />
+            </svg>
+          </button>
+          {canManage && (
+            <KpiActionsMenu kpi={kpi} teamId={teamId} onEdit={onEdit} onDelete={onDelete} onToggleSnooze={onToggleSnooze} />
+          )}
+        </div>
       </td>
+
+      {detailOpen && (
+        <EntityDetailPanel
+          entityType="kpi"
+          entityId={kpi.id}
+          title={kpi.title}
+          statusLabel={st.label}
+          createdAt={kpi.created_at}
+          ownerUser={kpi.owner}
+          description={kpi.description}
+          onClose={() => setDetailOpen(false)}
+        />
+      )}
     </tr>
   );
 }
@@ -1874,7 +2033,7 @@ export default function KPIsTab({ team, canManage }) {
                 {periods.slice(1).map((p) => (
                   <th key={p.key} className="py-3 pr-4 text-left w-28 whitespace-nowrap">{p.label}</th>
                 ))}
-                <th className="py-3 pr-4 w-16" />
+                <th className="sticky right-0 z-10 w-16 border-l border-slate-200 bg-slate-50 py-3 pr-4" />
               </tr>
             </thead>
             <tbody>

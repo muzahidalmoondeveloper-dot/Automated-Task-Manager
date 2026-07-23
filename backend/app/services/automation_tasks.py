@@ -5,6 +5,7 @@ from sqlalchemy import select, update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.models.organization import OrganizationMembership
 from app.models.integration import (
     CalendarEvent,
     ImportedEmail,
@@ -284,12 +285,38 @@ def find_fallback_assignee_id(
     return integration_owner_id
 
 
+async def resolve_org_id_for_user(db: AsyncSession, user: User):
+    """Best-effort org context for background jobs that iterate over users
+    system-wide (no request-scoped TenantContext available). Prefers the
+    user's last-selected org, falling back to their oldest active membership.
+    Returns None if the user has no org at all."""
+    if user.last_active_organization_id:
+        return user.last_active_organization_id
+
+    result = await db.execute(
+        select(OrganizationMembership.organization_id)
+        .where(OrganizationMembership.user_id == user.id, OrganizationMembership.is_active.is_(True))
+        .order_by(OrganizationMembership.created_at.asc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
 async def sync_microsoft_data_for_user(
     *,
     db: AsyncSession,
     user: User,
 ) -> dict:
-    repository = IntegrationRepository(db)
+    org_id = await resolve_org_id_for_user(db, user)
+    if org_id is None:
+        return {
+            "emails_imported": 0,
+            "calendar_events_imported": 0,
+            "transcripts_imported": 0,
+            "transcript_errors": [],
+        }
+
+    repository = IntegrationRepository(db, org_id)
 
     accounts = await repository.list_accounts_by_provider(
         user.id,

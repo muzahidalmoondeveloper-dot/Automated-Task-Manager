@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import DOMPurify from "dompurify";
 import RichEditor from "../components/RichEditor";
+import LinkedItemsHoverIcon from "../components/LinkedItemsHoverIcon";
+import EntityDetailPanel from "../components/EntityDetailPanel";
+import DatePicker from "../components/DatePicker";
 import toast from "react-hot-toast";
 import { rockApi } from "../api/rockApi";
 import { kpiApi } from "../api/kpiApi";
@@ -160,13 +163,8 @@ function MilestoneRow({ ms, users, onChange, onDelete, isDragOver, onDragStart, 
         placeholder="Milestone title"
         className="min-w-0 flex-1 border-none text-sm text-slate-700 placeholder:text-slate-400 outline-none" />
       {/* Date */}
-      <div className="flex items-center gap-1 shrink-0">
-        <svg className="h-3.5 w-3.5 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
-          <path fillRule="evenodd" d="M5.75 2a.75.75 0 01.75.75V4h7V2.75a.75.75 0 011.5 0V4h.25A2.75 2.75 0 0118 6.75v8.5A2.75 2.75 0 0115.25 18H4.75A2.75 2.75 0 012 15.25v-8.5A2.75 2.75 0 014.75 4H5V2.75A.75.75 0 015.75 2z" clipRule="evenodd" />
-        </svg>
-        <input type="date" value={ms.due_date || ""}
-          onChange={(e) => onChange({ ...ms, due_date: e.target.value || null })}
-          className="border-none text-xs text-slate-500 outline-none [color-scheme:light] w-28" />
+      <div className="w-40 shrink-0">
+        <DatePicker value={ms.due_date || ""} onChange={(e) => onChange({ ...ms, due_date: e.target.value || null })} />
       </div>
       {/* Owner */}
       <div className="relative shrink-0">
@@ -569,16 +567,7 @@ function RockModal({ team, users, objectives, teams, projects, currentUser, edit
               {/* Due date */}
               <div>
                 <label className="mb-1.5 block text-xs font-semibold text-slate-500">Due date</label>
-                <div className="flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2.5">
-                  <svg className="h-4 w-4 shrink-0 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
-                    <path fillRule="evenodd" d="M5.75 2a.75.75 0 01.75.75V4h7V2.75a.75.75 0 011.5 0V4h.25A2.75 2.75 0 0118 6.75v8.5A2.75 2.75 0 0115.25 18H4.75A2.75 2.75 0 012 15.25v-8.5A2.75 2.75 0 014.75 4H5V2.75A.75.75 0 015.75 2z" clipRule="evenodd" />
-                  </svg>
-                  <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)}
-                    className="flex-1 border-none bg-transparent text-sm text-slate-700 outline-none [color-scheme:light]" />
-                  {dueDate && (
-                    <button type="button" onClick={() => setDueDate("")} className="text-xs text-slate-400 hover:text-slate-600">Clear</button>
-                  )}
-                </div>
+                <DatePicker value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
               </div>
 
               {/* Tags */}
@@ -701,10 +690,11 @@ function RockModal({ team, users, objectives, teams, projects, currentUser, edit
 
 // ─── Rock row ─────────────────────────────────────────────────────────────────
 
-function RockRow({ rock, users, canManage, onEdit, onDelete, onArchive, onStatusChange, onMilestoneToggle }) {
+function RockRow({ rock, users, canManage, onEdit, onDelete, onArchive, onStatusChange, onMilestoneToggle, onRockUpdated }) {
   const [expanded, setExpanded] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuPos, setMenuPos] = useState(null);
+  const [detailOpen, setDetailOpen] = useState(false);
   const menuBtnRef = useRef(null);
 
   function openMenu(e) {
@@ -754,6 +744,7 @@ function RockRow({ rock, users, canManage, onEdit, onDelete, onArchive, onStatus
                 <path d="M11.603 7.963a.75.75 0 00-.977 1.138 2.5 2.5 0 01.142 3.667l-3 3a2.5 2.5 0 01-3.536-3.536l1.225-1.224a.75.75 0 00-1.061-1.06l-1.224 1.224a4 4 0 105.656 5.656l3-3a4 4 0 00-.225-5.865z" />
               </svg>
             )}
+            <LinkedItemsHoverIcon links={rock.links} />
           </div>
         </td>
         {/* Progress */}
@@ -776,7 +767,7 @@ function RockRow({ rock, users, canManage, onEdit, onDelete, onArchive, onStatus
         {/* Notes / actions */}
         <td className="py-3 pr-4 w-20">
           <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-            <button type="button" className="rounded p-1 text-slate-400 hover:bg-slate-100">
+            <button type="button" onClick={() => setDetailOpen(true)} title="Notes & details" className="rounded p-1 text-slate-400 hover:bg-slate-100">
               <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
                 <path fillRule="evenodd" d="M10 2c-2.236 0-4.43.18-6.57.524C1.993 2.755 1 4.014 1 5.426v5.148c0 1.413.993 2.67 2.43 2.902 1.168.188 2.352.327 3.55.414.28.02.521.18.642.413l1.713 3.293a.75.75 0 001.33 0l1.713-3.293a.647.647 0 01.642-.413 41.102 41.102 0 003.55-.414c1.437-.231 2.43-1.49 2.43-2.902V5.426c0-1.413-.993-2.67-2.43-2.902A41.289 41.289 0 0010 2z" clipRule="evenodd" />
               </svg>
@@ -859,6 +850,23 @@ function RockRow({ rock, users, canManage, onEdit, onDelete, onArchive, onStatus
           </tr>
         );
       })}
+
+      {detailOpen && (
+        <EntityDetailPanel
+          entityType="rock"
+          entityId={rock.id}
+          teamId={rock.team_id}
+          title={rock.title}
+          statusLabel={STATUS_CONFIG[rock.status]?.label || rock.status}
+          createdAt={rock.created_at}
+          ownerUser={rock.owner}
+          description={rock.description}
+          milestones={rock.milestones}
+          milestoneUsers={users}
+          onMilestonesChange={(newMilestones) => onRockUpdated?.({ ...rock, milestones: newMilestones })}
+          onClose={() => setDetailOpen(false)}
+        />
+      )}
     </>
   );
 }
@@ -1085,7 +1093,8 @@ export default function RocksTab({ team, canManage }) {
                   onDelete={handleDelete}
                   onArchive={handleArchive}
                   onStatusChange={handleStatusChange}
-                  onMilestoneToggle={handleMilestoneToggle} />
+                  onMilestoneToggle={handleMilestoneToggle}
+                  onRockUpdated={(updated) => setRocks((prev) => prev.map((r) => (r.id === updated.id ? updated : r)))} />
               ))}
             </tbody>
           </table>

@@ -7,6 +7,7 @@ from sqlalchemy.orm import selectinload
 from app.api.routes.teams import _serialize as serialize_team
 from app.core.auth_errors import AppException, ErrorDef
 from app.core.database import get_db
+from app.core.org_roles import PROJECT_MANAGER
 from app.core.tenant import TenantContext, get_tenant_context, require_org_admin, require_org_manager
 from app.models.issue import Issue
 from app.models.kpi import KPI
@@ -18,18 +19,34 @@ from app.repositories.team_repository import TeamRepository
 from app.schemas.issue import IssueOut
 from app.schemas.kpi import KPIOut
 from app.schemas.org import ObjectiveRead
-from app.schemas.project import ProjectCreate, ProjectRead, ProjectUpdate
+from app.schemas.project import (
+    ProjectCreate,
+    ProjectMemberAssign,
+    ProjectMemberOut,
+    ProjectRead,
+    ProjectUpdate,
+)
 from app.schemas.rock import RockOut
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
 _NOT_FOUND = ErrorDef(code="PROJECT_NOT_FOUND", status=http_status.HTTP_404_NOT_FOUND, message="Project not found.")
 _PLAN_LIMIT = ErrorDef(code="PLAN_LIMIT_EXCEEDED", status=http_status.HTTP_402_PAYMENT_REQUIRED, message="Your plan's project limit has been reached.")
+_NOT_ASSIGNED = ErrorDef(code="PROJECT_NOT_ASSIGNED", status=http_status.HTTP_403_FORBIDDEN, message="You are not assigned to this project.")
+
+
+async def _require_project_access(tenant: TenantContext, repo: ProjectRepository, project_id: int) -> None:
+    """Project Managers only see projects they're assigned to; every other
+    role keeps today's org-wide project visibility."""
+    if tenant.org_role == PROJECT_MANAGER and not await repo.is_member(project_id, tenant.user.id):
+        raise AppException(_NOT_ASSIGNED)
 
 
 @router.get("", response_model=list[ProjectRead])
 async def list_projects(tenant: TenantContext = Depends(get_tenant_context)):
     repo = ProjectRepository(tenant.db, tenant.organization_id)
+    if tenant.org_role == PROJECT_MANAGER:
+        return [ProjectRead.model_validate(p) for p in await repo.list_for_user(tenant.user.id)]
     return [ProjectRead.model_validate(p) for p in await repo.list_all()]
 
 
@@ -56,6 +73,7 @@ async def get_project(project_id: int, tenant: TenantContext = Depends(get_tenan
     project = await repo.get_by_id(project_id)
     if project is None:
         raise AppException(_NOT_FOUND)
+    await _require_project_access(tenant, repo, project_id)
     return ProjectRead.model_validate(project)
 
 
@@ -96,6 +114,7 @@ async def get_project_items(
     project = await repo.get_by_id(project_id)
     if project is None:
         raise AppException(_NOT_FOUND)
+    await _require_project_access(tenant, repo, project_id)
 
     org_id = tenant.organization_id
 
@@ -174,3 +193,50 @@ async def get_project_items(
         "rock_kpis": [KPIOut.model_validate(k) for k in rock_kpis],
         "teams": [serialize_team(t) for t in project_teams],
     }
+
+
+def _serialize_member(membership) -> ProjectMemberOut:
+    user = membership.user
+    return ProjectMemberOut(
+        id=membership.id,
+        user_id=membership.user_id,
+        full_name=user.full_name if user else None,
+        email=user.email if user else "",
+    )
+
+
+@router.get("/{project_id}/members", response_model=list[ProjectMemberOut])
+async def list_project_members(
+    project_id: int,
+    tenant: TenantContext = Depends(require_org_manager),
+):
+    repo = ProjectRepository(tenant.db, tenant.organization_id)
+    if await repo.get_by_id(project_id) is None:
+        raise AppException(_NOT_FOUND)
+    return [_serialize_member(m) for m in await repo.list_members(project_id)]
+
+
+@router.post("/{project_id}/members", response_model=ProjectMemberOut, status_code=http_status.HTTP_201_CREATED)
+async def add_project_member(
+    project_id: int,
+    payload: ProjectMemberAssign,
+    tenant: TenantContext = Depends(require_org_manager),
+):
+    repo = ProjectRepository(tenant.db, tenant.organization_id)
+    if await repo.get_by_id(project_id) is None:
+        raise AppException(_NOT_FOUND)
+    membership = await repo.add_member(project_id, payload.user_id)
+    return _serialize_member(membership)
+
+
+@router.delete("/{project_id}/members/{user_id}", status_code=http_status.HTTP_204_NO_CONTENT)
+async def remove_project_member(
+    project_id: int,
+    user_id: int,
+    tenant: TenantContext = Depends(require_org_manager),
+):
+    repo = ProjectRepository(tenant.db, tenant.organization_id)
+    if await repo.get_by_id(project_id) is None:
+        raise AppException(_NOT_FOUND)
+    await repo.remove_member(project_id, user_id)
+    return None

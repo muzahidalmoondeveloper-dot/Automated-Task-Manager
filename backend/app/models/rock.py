@@ -54,6 +54,7 @@ class Milestone(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     rock_id: Mapped[int] = mapped_column(Integer, ForeignKey("rocks.id", ondelete="CASCADE"), nullable=False)
     title: Mapped[str] = mapped_column(String(500), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", server_default="pending")
     due_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     owner_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)

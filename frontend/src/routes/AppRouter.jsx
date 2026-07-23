@@ -10,7 +10,6 @@ import UsersPage from "../pages/UsersPage";
 import TeamsPage from "../pages/TeamsPage";
 import ProjectsPage from "../pages/ProjectsPage";
 import ProjectDetailPage from "../pages/ProjectDetailPage";
-import ReportsPage from "../pages/ReportsPage";
 import ReportEditPage from "../pages/ReportEditPage";
 import ReportPreviewPage from "../pages/ReportPreviewPage";
 import TasksPage from "../pages/TasksPage";
@@ -47,7 +46,6 @@ export default function AppRouter() {
             <Route path="/teams/:teamId" element={<TeamDetailPage />} />
             <Route path="/projects" element={<ProjectsPage />} />
             <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
-            <Route path="/reports" element={<ReportsPage />} />
             <Route path="/reports/:reportId/edit" element={<ReportEditPage />} />
             <Route path="/reports/:reportId/preview" element={<ReportPreviewPage />} />
             <Route path="/tasks" element={<TasksPage />} />

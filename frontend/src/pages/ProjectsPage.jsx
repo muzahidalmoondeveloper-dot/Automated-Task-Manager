@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
 
 import { projectApi } from "../api/projectApi";
+import { userApi } from "../api/userApi";
+import { useAuth } from "../context/AuthContext";
 
 const PROJECT_STATUS_OPTIONS = [
   { value: "active", label: "Active" },
@@ -14,6 +16,7 @@ const initialForm = {
   name: "",
   description: "",
   status: "active",
+  project_manager_id: "",
 };
 
 function getStatusLabel(status) {
@@ -69,9 +72,16 @@ function ThreeDotsIcon() {
 }
 
 export default function ProjectsPage() {
+  const { user } = useAuth();
+  const canManageProjects =
+    user?.role === "owner" || user?.role === "admin" || user?.role === "team_manager";
+
   const [projects, setProjects] = useState([]);
   const [formData, setFormData] = useState(initialForm);
   const [editingProjectId, setEditingProjectId] = useState(null);
+  const [originalManagerId, setOriginalManagerId] = useState("");
+
+  const [projectManagers, setProjectManagers] = useState([]);
 
   const [isProjectModalOpen, setIsProjectModalOpen] = useState(false);
   const [openActionMenuId, setOpenActionMenuId] = useState(null);
@@ -135,6 +145,21 @@ export default function ProjectsPage() {
     loadProjects();
   }, []);
 
+  useEffect(() => {
+    if (!canManageProjects) return;
+
+    async function loadProjectManagers() {
+      try {
+        const data = await userApi.list();
+        setProjectManagers(data.filter((u) => u.role === "project_manager"));
+      } catch {
+        setProjectManagers([]);
+      }
+    }
+
+    loadProjectManagers();
+  }, [canManageProjects]);
+
   function handleChange(event) {
     const { name, value } = event.target;
 
@@ -147,6 +172,7 @@ export default function ProjectsPage() {
   function resetForm() {
     setFormData(initialForm);
     setEditingProjectId(null);
+    setOriginalManagerId("");
     setError("");
   }
 
@@ -167,7 +193,7 @@ export default function ProjectsPage() {
     setIsProjectModalOpen(false);
   }
 
-  function handleEdit(project) {
+  async function handleEdit(project) {
     setOpenActionMenuId(null);
     setEditingProjectId(project.id);
 
@@ -175,10 +201,20 @@ export default function ProjectsPage() {
       name: project.name || "",
       description: project.description || "",
       status: project.status || "active",
+      project_manager_id: "",
     });
 
     setError("");
     setIsProjectModalOpen(true);
+
+    try {
+      const members = await projectApi.listMembers(project.id);
+      const currentManagerId = members[0]?.user_id ? String(members[0].user_id) : "";
+      setOriginalManagerId(currentManagerId);
+      setFormData((current) => ({ ...current, project_manager_id: currentManagerId }));
+    } catch {
+      setOriginalManagerId("");
+    }
   }
 
   function toggleActionMenu(projectId) {
@@ -206,6 +242,15 @@ export default function ProjectsPage() {
           payload
         );
 
+        if (formData.project_manager_id !== originalManagerId) {
+          if (originalManagerId) {
+            await projectApi.removeMember(editingProjectId, Number(originalManagerId));
+          }
+          if (formData.project_manager_id) {
+            await projectApi.addMember(editingProjectId, Number(formData.project_manager_id));
+          }
+        }
+
         setProjects((current) =>
           current.map((project) =>
             project.id === editingProjectId ? updatedProject : project
@@ -215,6 +260,10 @@ export default function ProjectsPage() {
         toast.success("Project updated successfully.");
       } else {
         const createdProject = await projectApi.create(payload);
+
+        if (formData.project_manager_id) {
+          await projectApi.addMember(createdProject.id, Number(formData.project_manager_id));
+        }
 
         setProjects((current) => [createdProject, ...current]);
 
@@ -268,13 +317,15 @@ export default function ProjectsPage() {
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={openCreateModal}
-          className="w-fit rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800"
-        >
-          + Add Project
-        </button>
+        {canManageProjects ? (
+          <button
+            type="button"
+            onClick={openCreateModal}
+            className="w-fit rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800"
+          >
+            + Add Project
+          </button>
+        ) : null}
       </div>
 
       <div className="mb-6 border-b border-slate-200">
@@ -394,9 +445,11 @@ export default function ProjectsPage() {
                     Updated
                   </th>
 
-                  <th className="w-16 px-4 py-3 text-right font-semibold text-slate-700">
-                    Actions
-                  </th>
+                  {canManageProjects ? (
+                    <th className="w-16 px-4 py-3 text-right font-semibold text-slate-700">
+                      Actions
+                    </th>
+                  ) : null}
                 </tr>
               </thead>
 
@@ -441,48 +494,50 @@ export default function ProjectsPage() {
                         {formatDate(project.updated_at)}
                       </td>
 
-                      <td className="relative px-4 py-4 text-right align-middle">
-                        <button
-                          type="button"
-                          onClick={() => toggleActionMenu(project.id)}
-                          className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900"
-                          title="Project actions"
-                        >
-                          <ThreeDotsIcon />
-                        </button>
+                      {canManageProjects ? (
+                        <td className="relative px-4 py-4 text-right align-middle">
+                          <button
+                            type="button"
+                            onClick={() => toggleActionMenu(project.id)}
+                            className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+                            title="Project actions"
+                          >
+                            <ThreeDotsIcon />
+                          </button>
 
-                        {openActionMenuId === project.id ? (
-                          <div className="absolute right-4 top-12 z-20 w-36 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setOpenActionMenuId(null);
-                                handleEdit(project);
-                              }}
-                              className="block w-full px-4 py-2.5 text-left text-sm font-medium text-slate-700 hover:bg-slate-50"
-                            >
-                              Edit
-                            </button>
+                          {openActionMenuId === project.id ? (
+                            <div className="absolute right-4 top-12 z-20 w-36 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setOpenActionMenuId(null);
+                                  handleEdit(project);
+                                }}
+                                className="block w-full px-4 py-2.5 text-left text-sm font-medium text-slate-700 hover:bg-slate-50"
+                              >
+                                Edit
+                              </button>
 
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setOpenActionMenuId(null);
-                                handleDelete(project);
-                              }}
-                              className="block w-full px-4 py-2.5 text-left text-sm font-medium text-red-600 hover:bg-red-50"
-                            >
-                              Delete
-                            </button>
-                          </div>
-                        ) : null}
-                      </td>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setOpenActionMenuId(null);
+                                  handleDelete(project);
+                                }}
+                                className="block w-full px-4 py-2.5 text-left text-sm font-medium text-red-600 hover:bg-red-50"
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          ) : null}
+                        </td>
+                      ) : null}
                     </tr>
                   ))
                 ) : (
                   <tr>
                     <td
-                      colSpan={6}
+                      colSpan={canManageProjects ? 6 : 5}
                       className="px-4 py-8 text-center text-sm text-slate-500"
                     >
                       {hasActiveFilters
@@ -574,6 +629,33 @@ export default function ProjectsPage() {
                     </option>
                   ))}
                 </select>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-slate-700">
+                  Project Manager
+                </label>
+
+                <select
+                  name="project_manager_id"
+                  value={formData.project_manager_id}
+                  onChange={handleChange}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                >
+                  <option value="">No Project Manager assigned</option>
+                  {projectManagers.map((manager) => (
+                    <option key={manager.id} value={manager.id}>
+                      {manager.full_name || manager.email}
+                    </option>
+                  ))}
+                </select>
+
+                {projectManagers.length === 0 ? (
+                  <p className="mt-1 text-xs text-slate-400">
+                    No users with the Project Manager role yet — assign that role from the Users
+                    page first.
+                  </p>
+                ) : null}
               </div>
 
               <div className="flex gap-3 pt-2">
