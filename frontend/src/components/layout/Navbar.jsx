@@ -34,6 +34,17 @@ function BellIcon({ className }) {
   );
 }
 
+function TrashIcon({ className }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 6h18" />
+      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+      <path d="M10 11v6M14 11v6" />
+    </svg>
+  );
+}
+
 export default function Navbar({ unreadCount = 0, onUnreadCountChange, onUnreadCountReset }) {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -94,6 +105,27 @@ export default function Navbar({ unreadCount = 0, onUnreadCountChange, onUnreadC
     }
   }
 
+  async function handleDelete(notification, event) {
+    event.stopPropagation();
+    try {
+      await notificationApi.remove(notification.id);
+      setNotifications((prev) => prev.filter((n) => n.id !== notification.id));
+      if (!notification.is_read) onUnreadCountChange?.(-1);
+    } catch {
+      // silent
+    }
+  }
+
+  async function handleClearAll() {
+    try {
+      await notificationApi.clearAll();
+      setNotifications([]);
+      onUnreadCountReset?.();
+    } catch {
+      // silent
+    }
+  }
+
   function handleNotificationClick(n) {
     handleMarkRead(n);
     setIsOpen(false);
@@ -141,15 +173,26 @@ export default function Navbar({ unreadCount = 0, onUnreadCountChange, onUnreadC
                       </span>
                     )}
                   </h3>
-                  {unreadCount > 0 && (
-                    <button
-                      type="button"
-                      onClick={handleMarkAllRead}
-                      className="text-xs font-medium text-slate-500 hover:text-slate-900"
-                    >
-                      Mark all read
-                    </button>
-                  )}
+                  <div className="flex items-center gap-3">
+                    {unreadCount > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleMarkAllRead}
+                        className="text-xs font-medium text-slate-500 hover:text-slate-900"
+                      >
+                        Mark all read
+                      </button>
+                    )}
+                    {notifications.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleClearAll}
+                        className="text-xs font-medium text-slate-500 hover:text-red-600"
+                      >
+                        Clear all
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {/* List */}
@@ -167,41 +210,49 @@ export default function Navbar({ unreadCount = 0, onUnreadCountChange, onUnreadC
                     notifications.map((n) => {
                       const meta = TYPE_META[n.type] || { icon: "🔔", label: "" };
                       return (
-                        <button
+                        <div
                           key={n.id}
-                          type="button"
+                          role="button"
+                          tabIndex={0}
                           onClick={() => handleNotificationClick(n)}
-                          className={`w-full px-4 py-3 text-left transition hover:bg-slate-50 ${
+                          onKeyDown={(e) => e.key === "Enter" && handleNotificationClick(n)}
+                          className={`group flex w-full cursor-pointer items-start gap-2 px-4 py-3 text-left transition hover:bg-slate-50 ${
                             !n.is_read ? "bg-blue-50/50" : "bg-white"
                           }`}
                         >
-                          <div className="flex items-start gap-3">
-                            <span className="mt-0.5 shrink-0 text-base leading-none">
-                              {meta.icon}
-                            </span>
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center gap-2">
-                                <p className="truncate text-xs font-semibold text-slate-800">
-                                  {n.title}
-                                </p>
-                                {meta.label && (
-                                  <span className="shrink-0 rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">
-                                    {meta.label}
-                                  </span>
-                                )}
-                              </div>
-                              <p className="mt-0.5 line-clamp-2 text-xs text-slate-500">
-                                {n.message}
+                          <span className="mt-0.5 shrink-0 text-base leading-none">
+                            {meta.icon}
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <p className="truncate text-xs font-semibold text-slate-800">
+                                {n.title}
                               </p>
-                              <p className="mt-1 text-[10px] text-slate-400">
-                                {timeAgo(n.created_at)}
-                              </p>
+                              {meta.label && (
+                                <span className="shrink-0 rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">
+                                  {meta.label}
+                                </span>
+                              )}
                             </div>
-                            {!n.is_read && (
-                              <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-blue-500" />
-                            )}
+                            <p className="mt-0.5 line-clamp-2 text-xs text-slate-500">
+                              {n.message}
+                            </p>
+                            <p className="mt-1 text-[10px] text-slate-400">
+                              {timeAgo(n.created_at)}
+                            </p>
                           </div>
-                        </button>
+                          {!n.is_read && (
+                            <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-blue-500" />
+                          )}
+                          <button
+                            type="button"
+                            onClick={(e) => handleDelete(n, e)}
+                            aria-label="Delete notification"
+                            className="shrink-0 rounded-md p-1 text-slate-300 opacity-0 transition hover:bg-slate-200 hover:text-red-600 group-hover:opacity-100"
+                          >
+                            <TrashIcon className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
                       );
                     })
                   )}

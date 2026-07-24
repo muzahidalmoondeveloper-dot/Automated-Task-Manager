@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
 
 import { teamApi } from "../api/teamApi";
@@ -29,6 +30,7 @@ function ThreeDotsIcon() {
 }
 
 export default function TeamsPage() {
+  const navigate = useNavigate();
   const [teams, setTeams] = useState([]);
   const [users, setUsers] = useState([]);
 
@@ -433,9 +435,13 @@ export default function TeamsPage() {
                             </div>
 
                             <div className="min-w-0">
-                              <p className="truncate font-semibold text-slate-900">
+                              <button
+                                type="button"
+                                onClick={() => navigate(`/teams/${team.id}?tab=scoreboard`)}
+                                className="truncate font-semibold text-slate-900 hover:text-indigo-600 hover:underline"
+                              >
                                 {team.name}
-                              </p>
+                              </button>
                               <p className="mt-1 text-xs text-slate-400">
                                 Team workspace
                               </p>

@@ -18,4 +18,12 @@ export const notificationApi = {
   markAllRead() {
     return apiClient.patch("/notifications/read-all");
   },
+
+  remove(notificationId) {
+    return apiClient.delete(`/notifications/${notificationId}`);
+  },
+
+  clearAll() {
+    return apiClient.delete("/notifications");
+  },
 };

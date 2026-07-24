@@ -1,5 +1,13 @@
 import { apiClient } from "./client";
 
+function buildQuery(params = {}) {
+  const qs = Object.entries(params)
+    .filter(([, v]) => v !== undefined && v !== null && v !== "")
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+    .join("&");
+  return qs ? `?${qs}` : "";
+}
+
 export const teamApi = {
   list() {
     return apiClient.get("/teams");
@@ -19,5 +27,13 @@ export const teamApi = {
 
   delete(id) {
     return apiClient.delete(`/teams/${id}`);
+  },
+
+  getScoreboard(teamId, params = {}) {
+    return apiClient.get(`/teams/${teamId}/scoreboard${buildQuery(params)}`);
+  },
+
+  getScoreboardTasks(teamId, params = {}) {
+    return apiClient.get(`/teams/${teamId}/scoreboard/tasks${buildQuery(params)}`);
   },
 };

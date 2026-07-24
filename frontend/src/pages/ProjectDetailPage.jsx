@@ -1956,7 +1956,6 @@ export default function ProjectDetailPage() {
                   name="team_id"
                   value={formData.team_id}
                   onChange={handleChange}
-                  required
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                 >
                   <option value="">Select team</option>
@@ -1969,8 +1968,8 @@ export default function ProjectDetailPage() {
                 </select>
 
                 {!teams.length ? (
-                  <p className="mt-1 text-xs text-red-500">
-                    Create a team first from Teams page.
+                  <p className="mt-1 text-xs text-slate-400">
+                    No teams yet — you can assign one later from the Teams page.
                   </p>
                 ) : null}
               </div>

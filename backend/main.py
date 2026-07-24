@@ -24,6 +24,8 @@ from app.api.routes import reports
 from app.api.routes import notes
 from app.api.routes import project_invitations
 from app.api.routes import task_requests
+from app.api.routes import scoreboard
+from app.api.routes import team_scoreboard
 import app.models.issue  # noqa: F401  — register Issue
 import app.models.meeting  # noqa: F401  — register Meeting models
 import app.models.chat  # noqa: F401  — register models for auto table creation
@@ -183,6 +185,8 @@ app.include_router(reports.router, prefix=settings.API_PREFIX)
 app.include_router(notes.router, prefix=settings.API_PREFIX)
 app.include_router(project_invitations.router, prefix=settings.API_PREFIX)
 app.include_router(task_requests.router, prefix=settings.API_PREFIX)
+app.include_router(scoreboard.router, prefix=settings.API_PREFIX)
+app.include_router(team_scoreboard.router, prefix=settings.API_PREFIX)
 
 @app.get("/health")
 async def health_check():

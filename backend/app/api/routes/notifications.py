@@ -2,7 +2,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -83,3 +83,35 @@ async def mark_notification_read(
     await db.refresh(notification)
 
     return notification
+
+
+@router.delete("/{notification_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_notification(
+    notification_id: int,
+    db: AsyncSession = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+):
+    result = await db.execute(
+        select(Notification).where(
+            Notification.id == notification_id,
+            Notification.user_id == tenant.user.id,
+        )
+    )
+    notification = result.scalar_one_or_none()
+
+    if notification is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notification not found.")
+
+    await db.delete(notification)
+    await db.commit()
+
+
+@router.delete("", status_code=status.HTTP_204_NO_CONTENT)
+async def clear_all_notifications(
+    db: AsyncSession = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+):
+    await db.execute(
+        delete(Notification).where(Notification.user_id == tenant.user.id)
+    )
+    await db.commit()

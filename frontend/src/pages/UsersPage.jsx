@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
 
 import { userApi } from "../api/userApi";
@@ -64,6 +65,7 @@ function ThreeDotsIcon() {
 
 export default function UsersPage() {
   const { user } = useAuth();
+  const navigate = useNavigate();
 
   // Users & teams
   const [users, setUsers] = useState([]);
@@ -472,7 +474,13 @@ export default function UsersPage() {
                                   {getUserInitials(item)}
                                 </div>
                                 <div className="min-w-0">
-                                  <p className="truncate font-semibold text-slate-900">{item.full_name}</p>
+                                  <button
+                                    type="button"
+                                    onClick={() => navigate(`/users/${item.id}/scoreboard`)}
+                                    className="truncate font-semibold text-slate-900 hover:text-indigo-600 hover:underline"
+                                  >
+                                    {item.full_name}
+                                  </button>
                                   {user?.id === item.id && (
                                     <p className="mt-1 text-xs font-medium text-slate-400">You</p>
                                   )}

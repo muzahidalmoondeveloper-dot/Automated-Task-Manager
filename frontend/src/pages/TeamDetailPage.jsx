@@ -18,6 +18,7 @@ import RocksTab from "./RocksTab";
 import KPIsTab from "./KPIsTab";
 import IssuesTab from "./IssuesTab";
 import MeetingsTab from "./MeetingsTab";
+import TeamScoreboardTab from "./TeamScoreboardTab";
 import RichEditor from "../components/RichEditor";
 
 function stripHtml(html) {
@@ -808,12 +809,13 @@ function getStatusBadgeClass(status) {
 }
 
 const TEAM_PAGE_TABS = [
-  { id: "news",     label: "News"     },
-  { id: "rocks",    label: "Rocks"    },
-  { id: "kpis",     label: "KPIs"     },
-  { id: "todos",    label: "To-Dos"   },
-  { id: "issues",   label: "Issues"   },
-  { id: "meetings", label: "Meetings" },
+  { id: "news",       label: "News"       },
+  { id: "rocks",      label: "Rocks"      },
+  { id: "kpis",       label: "KPIs"       },
+  { id: "todos",      label: "To-Dos"     },
+  { id: "issues",     label: "Issues"     },
+  { id: "meetings",   label: "Meetings"   },
+  { id: "scoreboard", label: "Scoreboard" },
 ];
 
 function CreateTodoModal({ team, users, editing, onClose, onSave, saving }) {
@@ -1408,6 +1410,10 @@ export default function TeamDetailPage() {
 
       {activeTab === "meetings" && (
         <MeetingsTab team={team} canManage={canManageTasks} />
+      )}
+
+      {activeTab === "scoreboard" && (
+        <TeamScoreboardTab team={team} />
       )}
     </div>
   );

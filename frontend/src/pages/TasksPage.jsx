@@ -648,10 +648,6 @@ export default function TasksPage() {
 
   async function handleSubmit(e) {
     e.preventDefault();
-    if (!isEditing && !formData.team_id) {
-      setFormError("Select a team — the task will be added to its To-Do list.");
-      return;
-    }
     setIsSubmitting(true);
     setFormError("");
     try {
@@ -1418,7 +1414,7 @@ export default function TasksPage() {
             <div className="mb-6 flex items-center justify-between">
               <div>
                 <h2 className="text-xl font-semibold text-slate-900">{isEditing ? "Edit Task" : "Create Task"}</h2>
-                <p className="mt-1 text-sm text-slate-500">{isEditing ? "Update this task's details." : "Create a new task — it will be added to the selected team's To-Do list."}</p>
+                <p className="mt-1 text-sm text-slate-500">{isEditing ? "Update this task's details." : "Create a new task. A team can be assigned now or later."}</p>
               </div>
               <button type="button" onClick={closeModal}
                 className="rounded-lg px-3 py-2 text-sm font-semibold text-slate-500 hover:bg-slate-100">✕</button>
@@ -1486,8 +1482,8 @@ export default function TasksPage() {
               </div>
 
               <div>
-                <label className="mb-1 block text-sm font-medium text-slate-700">Team {!isEditing && "*"}</label>
-                <select name="team_id" value={formData.team_id} onChange={handleChange} required={!isEditing}
+                <label className="mb-1 block text-sm font-medium text-slate-700">Team</label>
+                <select name="team_id" value={formData.team_id} onChange={handleChange}
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
                   <option value="">Select team</option>
                   {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
