@@ -7,7 +7,7 @@ from sqlalchemy.orm import selectinload
 from app.api.routes.teams import _serialize as serialize_team
 from app.core.auth_errors import AppException, ErrorDef
 from app.core.database import get_db
-from app.core.org_roles import PROJECT_MANAGER
+from app.core.org_roles import CLIENT, PROJECT_MANAGER
 from app.core.tenant import TenantContext, get_tenant_context, require_org_admin, require_org_manager
 from app.models.issue import Issue
 from app.models.kpi import KPI
@@ -33,19 +33,23 @@ router = APIRouter(prefix="/projects", tags=["Projects"])
 _NOT_FOUND = ErrorDef(code="PROJECT_NOT_FOUND", status=http_status.HTTP_404_NOT_FOUND, message="Project not found.")
 _PLAN_LIMIT = ErrorDef(code="PLAN_LIMIT_EXCEEDED", status=http_status.HTTP_402_PAYMENT_REQUIRED, message="Your plan's project limit has been reached.")
 _NOT_ASSIGNED = ErrorDef(code="PROJECT_NOT_ASSIGNED", status=http_status.HTTP_403_FORBIDDEN, message="You are not assigned to this project.")
+_CLIENT_FORBIDDEN = ErrorDef(code="CLIENT_ITEMS_FORBIDDEN", status=http_status.HTTP_403_FORBIDDEN, message="Clients view project progress through Reports, not this endpoint.")
+
+
+_PROJECT_SCOPED_ROLES = {PROJECT_MANAGER, CLIENT}
 
 
 async def _require_project_access(tenant: TenantContext, repo: ProjectRepository, project_id: int) -> None:
-    """Project Managers only see projects they're assigned to; every other
-    role keeps today's org-wide project visibility."""
-    if tenant.org_role == PROJECT_MANAGER and not await repo.is_member(project_id, tenant.user.id):
+    """Project Managers and Clients only see projects they're assigned to;
+    every other role keeps today's org-wide project visibility."""
+    if tenant.org_role in _PROJECT_SCOPED_ROLES and not await repo.is_member(project_id, tenant.user.id):
         raise AppException(_NOT_ASSIGNED)
 
 
 @router.get("", response_model=list[ProjectRead])
 async def list_projects(tenant: TenantContext = Depends(get_tenant_context)):
     repo = ProjectRepository(tenant.db, tenant.organization_id)
-    if tenant.org_role == PROJECT_MANAGER:
+    if tenant.org_role in _PROJECT_SCOPED_ROLES:
         return [ProjectRead.model_validate(p) for p in await repo.list_for_user(tenant.user.id)]
     return [ProjectRead.model_validate(p) for p in await repo.list_all()]
 
@@ -110,6 +114,9 @@ async def get_project_items(
     db: AsyncSession = Depends(get_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
+    if tenant.org_role == CLIENT:
+        raise AppException(_CLIENT_FORBIDDEN)
+
     repo = ProjectRepository(db, tenant.organization_id)
     project = await repo.get_by_id(project_id)
     if project is None:

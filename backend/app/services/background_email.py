@@ -19,7 +19,10 @@ from __future__ import annotations
 import logging
 from datetime import date
 
+from sqlalchemy import select
+
 from app.core.database import AsyncSessionLocal
+from app.models.task_request import TaskRequest
 from app.repositories.task_repository import TaskRepository
 from app.repositories.user_repository import UserRepository
 from app.services.email_service import email_service
@@ -204,3 +207,61 @@ async def bg_send_due_date_reminder(
             )
     except Exception:
         logger.exception("bg_send_due_date_reminder FAILED | task_id=%s", task_id)
+
+
+# ─── 7. Client task request submitted ────────────────────────────────────────
+
+async def bg_send_client_task_request(
+    task_request_id: int, recipient_id: int, submitted_by_id: int
+) -> None:
+    logger.info(
+        "bg_send_client_task_request START | request_id=%s | recipient_id=%s | submitted_by_id=%s",
+        task_request_id, recipient_id, submitted_by_id,
+    )
+    try:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(select(TaskRequest).where(TaskRequest.id == task_request_id))
+            task_request = result.scalar_one_or_none()
+            user_repo = UserRepository(db)
+            recipient = await user_repo.get_by_id(recipient_id)
+            submitted_by = await user_repo.get_by_id(submitted_by_id)
+            if not (task_request and recipient and submitted_by):
+                logger.warning(
+                    "bg_send_client_task_request: missing data | request=%s recipient=%s submitted_by=%s",
+                    task_request_id, recipient_id, submitted_by_id,
+                )
+                return
+            await email_service.send_client_task_request(
+                db, task_request=task_request, recipient=recipient, submitted_by=submitted_by,
+            )
+    except Exception:
+        logger.exception("bg_send_client_task_request FAILED | request_id=%s", task_request_id)
+
+
+# ─── 8. Task request reviewed (approved/rejected) ────────────────────────────
+
+async def bg_send_task_request_reviewed(
+    task_request_id: int, client_id: int, reviewed_by_id: int, approved: bool
+) -> None:
+    logger.info(
+        "bg_send_task_request_reviewed START | request_id=%s | client_id=%s | reviewed_by_id=%s | approved=%s",
+        task_request_id, client_id, reviewed_by_id, approved,
+    )
+    try:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(select(TaskRequest).where(TaskRequest.id == task_request_id))
+            task_request = result.scalar_one_or_none()
+            user_repo = UserRepository(db)
+            client = await user_repo.get_by_id(client_id)
+            reviewed_by = await user_repo.get_by_id(reviewed_by_id)
+            if not (task_request and client and reviewed_by):
+                logger.warning(
+                    "bg_send_task_request_reviewed: missing data | request=%s client=%s reviewed_by=%s",
+                    task_request_id, client_id, reviewed_by_id,
+                )
+                return
+            await email_service.send_task_request_reviewed(
+                db, task_request=task_request, client=client, reviewed_by=reviewed_by, approved=approved,
+            )
+    except Exception:
+        logger.exception("bg_send_task_request_reviewed FAILED | request_id=%s", task_request_id)

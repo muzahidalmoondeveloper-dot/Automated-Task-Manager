@@ -1,6 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import ProtectedRoute from "./ProtectedRoute";
+import { useAuth } from "../context/AuthContext";
 
 import LoginPage from "../pages/LoginPage";
 import RegisterPage from "../pages/RegisterPage";
@@ -15,17 +16,24 @@ import ReportPreviewPage from "../pages/ReportPreviewPage";
 import TasksPage from "../pages/TasksPage";
 import TeamDetailPage from "../pages/TeamDetailPage";
 import AppLayout from "../components/layout/AppLayout";
+import ClientLayout from "../components/layout/ClientLayout";
+import ClientProjectViewPage from "../pages/ClientProjectViewPage";
 import IntegrationsPage from "../pages/IntegrationsPage";
 import ProfilePage from "../pages/ProfilePage";
 import OrganizationPage from "../pages/OrganizationPage";
 import OrganizationSetupPage from "../pages/OrganizationSetupPage";
 import AcceptInvitationPage from "../pages/AcceptInvitationPage";
 
+function RootRedirect() {
+  const { user } = useAuth();
+  return <Navigate to={user?.role === "client" ? "/client" : "/dashboard"} replace />;
+}
+
 export default function AppRouter() {
   return (
     <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <Routes>
-        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/" element={<RootRedirect />} />
 
         {/* Public */}
         <Route path="/login" element={<LoginPage />} />
@@ -51,6 +59,11 @@ export default function AppRouter() {
             <Route path="/tasks" element={<TasksPage />} />
             <Route path="/integrations" element={<IntegrationsPage />} />
             <Route path="/organization" element={<OrganizationPage />} />
+          </Route>
+
+          <Route element={<ClientLayout />}>
+            <Route path="/client" element={<ClientProjectViewPage />} />
+            <Route path="/client/projects/:projectId" element={<ClientProjectViewPage />} />
           </Route>
         </Route>
       </Routes>

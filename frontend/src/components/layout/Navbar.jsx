@@ -5,12 +5,15 @@ import { notificationApi } from "../../api/notificationApi";
 import { useAuth } from "../../context/AuthContext";
 
 const TYPE_META = {
-  task_assigned:      { icon: "📋", label: "Assigned"      },
-  task_approved:      { icon: "✅", label: "Approved"      },
-  task_review:        { icon: "🔍", label: "Review"        },
-  task_assigned_back: { icon: "↩️", label: "Reassigned"    },
-  task_due_soon:      { icon: "⏰", label: "Due Soon"      },
-  task_overdue:       { icon: "⚠️", label: "Overdue"       },
+  task_assigned:            { icon: "📋", label: "Assigned"      },
+  task_approved:            { icon: "✅", label: "Approved"      },
+  task_review:              { icon: "🔍", label: "Review"        },
+  task_assigned_back:       { icon: "↩️", label: "Reassigned"    },
+  task_due_soon:            { icon: "⏰", label: "Due Soon"      },
+  task_overdue:             { icon: "⚠️", label: "Overdue"       },
+  task_request_submitted:   { icon: "📨", label: "Task Request"  },
+  task_request_approved:    { icon: "✅", label: "Request Approved" },
+  task_request_rejected:    { icon: "🚫", label: "Request Declined" },
 };
 
 function timeAgo(dateStr) {
@@ -94,7 +97,9 @@ export default function Navbar({ unreadCount = 0, onUnreadCountChange, onUnreadC
   function handleNotificationClick(n) {
     handleMarkRead(n);
     setIsOpen(false);
-    if (n.task_id) {
+    if (n.project_id) {
+      navigate(user?.role === "client" ? `/client/projects/${n.project_id}` : `/projects/${n.project_id}`);
+    } else if (n.task_id) {
       navigate("/tasks");
     }
   }

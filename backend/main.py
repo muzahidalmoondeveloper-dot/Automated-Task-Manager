@@ -22,6 +22,8 @@ from app.api.routes import meetings
 from app.api.routes import risks
 from app.api.routes import reports
 from app.api.routes import notes
+from app.api.routes import project_invitations
+from app.api.routes import task_requests
 import app.models.issue  # noqa: F401  — register Issue
 import app.models.meeting  # noqa: F401  — register Meeting models
 import app.models.chat  # noqa: F401  — register models for auto table creation
@@ -37,6 +39,7 @@ import app.models.organization  # noqa: F401  — register Organization, Organiz
 import app.models.risk  # noqa: F401  — register Risk
 import app.models.report  # noqa: F401  — register Report and all report snapshot/theme/branding tables
 import app.models.note  # noqa: F401  — register Note
+import app.models.task_request  # noqa: F401  — register TaskRequest
 from contextlib import asynccontextmanager
 import logging
 from app.services.automation_scheduler import start_scheduler, stop_scheduler
@@ -117,6 +120,12 @@ async def lifespan(app: FastAPI):
         await conn.execute(text(
             "ALTER TABLE issues ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ"
         ))
+        await conn.execute(text(
+            "ALTER TABLE organization_invitations ADD COLUMN IF NOT EXISTS project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE"
+        ))
 
     await seed_admin()
 
@@ -172,6 +181,8 @@ app.include_router(organizations.router, prefix=settings.API_PREFIX)
 app.include_router(risks.router, prefix=settings.API_PREFIX)
 app.include_router(reports.router, prefix=settings.API_PREFIX)
 app.include_router(notes.router, prefix=settings.API_PREFIX)
+app.include_router(project_invitations.router, prefix=settings.API_PREFIX)
+app.include_router(task_requests.router, prefix=settings.API_PREFIX)
 
 @app.get("/health")
 async def health_check():

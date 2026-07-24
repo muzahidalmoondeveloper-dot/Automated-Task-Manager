@@ -45,4 +45,8 @@ export const authApi = {
   selectOrganization(orgId) {
     return apiClient.post(`/auth/select-organization/${orgId}`, {});
   },
+
+  registerAndAcceptInvitation(payload) {
+    return apiClient.post("/auth/register-and-accept-invitation", payload);
+  },
 };

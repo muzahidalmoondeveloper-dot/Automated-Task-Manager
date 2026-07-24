@@ -7,8 +7,16 @@ import { taskApi } from "../api/taskApi";
 import { userApi } from "../api/userApi";
 import { teamApi } from "../api/teamApi";
 import { reportApi } from "../api/reportApi";
+import { projectInvitationApi } from "../api/projectInvitationApi";
+import { taskRequestApi } from "../api/taskRequestApi";
 import { useAuth } from "../context/AuthContext";
 import DatePicker from "../components/DatePicker";
+
+const TASK_REQUEST_STATUS_BADGE = {
+  pending: "bg-amber-100 text-amber-700",
+  converted: "bg-emerald-100 text-emerald-700",
+  rejected: "bg-red-100 text-red-700",
+};
 
 const STATUS_OPTIONS = [
   { value: "todo", label: "Todo" },
@@ -98,6 +106,18 @@ export default function ProjectDetailPage() {
   const [pmAssignments, setPmAssignments] = useState([]);
   const [isLoadingPmAssignments, setIsLoadingPmAssignments] = useState(false);
   const [selectedPmUserId, setSelectedPmUserId] = useState("");
+
+  const [clientInvitations, setClientInvitations] = useState([]);
+  const [isLoadingClientInvitations, setIsLoadingClientInvitations] = useState(false);
+  const [isInviteClientModalOpen, setIsInviteClientModalOpen] = useState(false);
+  const [inviteClientEmail, setInviteClientEmail] = useState("");
+  const [isInvitingClient, setIsInvitingClient] = useState(false);
+
+  const [taskRequests, setTaskRequests] = useState([]);
+  const [isLoadingTaskRequests, setIsLoadingTaskRequests] = useState(false);
+  const [convertingRequest, setConvertingRequest] = useState(null);
+  const [convertForm, setConvertForm] = useState({ team_id: "", assignee_id: "", priority: "medium", due_date: "" });
+  const [isConvertingRequest, setIsConvertingRequest] = useState(false);
 
   const [formData, setFormData] = useState(initialForm);
   const [editingTaskId, setEditingTaskId] = useState(null);
@@ -346,6 +366,112 @@ export default function ProjectDetailPage() {
     }
   }
 
+  async function loadClientInvitations() {
+    try {
+      setIsLoadingClientInvitations(true);
+      const data = await projectInvitationApi.list(projectId);
+      setClientInvitations(data);
+    } catch (err) {
+      toast.error(err.message || "Failed to load client invitations.");
+    } finally {
+      setIsLoadingClientInvitations(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!canCreateTasks) return;
+    loadClientInvitations();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, canCreateTasks]);
+
+  async function handleInviteClient(event) {
+    event.preventDefault();
+    if (!inviteClientEmail.trim()) return;
+    try {
+      setIsInvitingClient(true);
+      await projectInvitationApi.invite(projectId, inviteClientEmail.trim());
+      toast.success("Client invitation sent.");
+      setInviteClientEmail("");
+      setIsInviteClientModalOpen(false);
+      await loadClientInvitations();
+    } catch (err) {
+      toast.error(err.message || "Failed to invite client.");
+    } finally {
+      setIsInvitingClient(false);
+    }
+  }
+
+  async function handleRevokeClientInvitation(invitationId) {
+    if (!window.confirm("Revoke this client invitation?")) return;
+    try {
+      await projectInvitationApi.revoke(projectId, invitationId);
+      setClientInvitations((current) => current.filter((inv) => inv.id !== invitationId));
+      toast.success("Invitation revoked.");
+    } catch (err) {
+      toast.error(err.message || "Failed to revoke invitation.");
+    }
+  }
+
+  async function loadTaskRequests() {
+    try {
+      setIsLoadingTaskRequests(true);
+      const data = await taskRequestApi.list(projectId);
+      setTaskRequests(data);
+    } catch (err) {
+      toast.error(err.message || "Failed to load task requests.");
+    } finally {
+      setIsLoadingTaskRequests(false);
+    }
+  }
+
+  useEffect(() => {
+    if (activeTab !== "task requests") return;
+    loadTaskRequests();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, projectId]);
+
+  function openConvertModal(request) {
+    setConvertingRequest(request);
+    setConvertForm({ team_id: "", assignee_id: "", priority: "medium", due_date: "" });
+  }
+
+  function handleConvertFormChange(event) {
+    const { name, value } = event.target;
+    setConvertForm((current) => ({ ...current, [name]: value }));
+  }
+
+  async function handleConvertRequest(event) {
+    event.preventDefault();
+    if (!convertForm.team_id) return;
+    try {
+      setIsConvertingRequest(true);
+      const updated = await taskRequestApi.convert(projectId, convertingRequest.id, {
+        team_id: Number(convertForm.team_id),
+        assignee_id: convertForm.assignee_id ? Number(convertForm.assignee_id) : null,
+        priority: convertForm.priority,
+        due_date: convertForm.due_date || null,
+      });
+      setTaskRequests((current) => current.map((r) => (r.id === updated.id ? updated : r)));
+      setConvertingRequest(null);
+      toast.success("Task request converted into a task.");
+    } catch (err) {
+      toast.error(err.message || "Failed to convert task request.");
+    } finally {
+      setIsConvertingRequest(false);
+    }
+  }
+
+  async function handleRejectRequest(request) {
+    if (!window.confirm(`Reject "${request.title}"?`)) return;
+    try {
+      const updated = await taskRequestApi.reject(projectId, request.id);
+      setTaskRequests((current) => current.map((r) => (r.id === updated.id ? updated : r)));
+      toast.success("Task request rejected.");
+    } catch (err) {
+      toast.error(err.message || "Failed to reject task request.");
+    }
+  }
+
   function handleChange(event) {
     const { name, value } = event.target;
 
@@ -590,19 +716,31 @@ export default function ProjectDetailPage() {
         </div>
 
         {canCreateTasks ? (
-          <button
-            type="button"
-            onClick={openCreateModal}
-            className="w-fit rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800"
-          >
-            + Add Task
-          </button>
+          <div className="flex w-fit gap-2">
+            <button
+              type="button"
+              onClick={() => setIsInviteClientModalOpen(true)}
+              className="rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              Invite Client
+            </button>
+            <button
+              type="button"
+              onClick={openCreateModal}
+              className="w-fit rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800"
+            >
+              + Add Task
+            </button>
+          </div>
         ) : null}
       </div>
 
       <div className="mb-6 border-b border-slate-200">
         <nav className="flex gap-6 overflow-x-auto">
-          {["overview", "list", "board", "calendar", "reports"].map((tab) => (
+          {(canCreateTasks
+            ? ["overview", "list", "board", "calendar", "reports", "task requests"]
+            : ["overview", "list", "board", "calendar", "reports"]
+          ).map((tab) => (
             <button
               key={tab}
               type="button"
@@ -1195,6 +1333,37 @@ export default function ProjectDetailPage() {
               </div>
             ) : null}
 
+            {/* ── Pending client invitations (staff only) ── */}
+            {canCreateTasks ? (
+              <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                <h2 className="text-base font-semibold text-slate-900">Client Invitations</h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Invited clients can view this project's status and submit task requests once they accept.
+                </p>
+
+                {isLoadingClientInvitations ? (
+                  <p className="mt-4 text-sm text-slate-500">Loading...</p>
+                ) : clientInvitations.length === 0 ? (
+                  <p className="mt-4 text-sm text-slate-400">No pending client invitations.</p>
+                ) : (
+                  <ul className="mt-4 divide-y divide-slate-100">
+                    {clientInvitations.map((inv) => (
+                      <li key={inv.id} className="flex items-center justify-between py-2.5">
+                        <span className="text-sm text-slate-700">{inv.email}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleRevokeClientInvitation(inv.id)}
+                          className="text-xs font-semibold text-red-600 hover:underline"
+                        >
+                          Revoke
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            ) : null}
+
           </section>
         ) : null}
 
@@ -1631,6 +1800,60 @@ export default function ProjectDetailPage() {
             )}
           </section>
         ) : null}
+
+        {activeTab === "task requests" ? (
+          <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h2 className="mb-4 text-lg font-semibold text-slate-900">Task Requests</h2>
+
+            {isLoadingTaskRequests ? (
+              <p className="text-sm text-slate-500">Loading task requests...</p>
+            ) : taskRequests.length === 0 ? (
+              <p className="rounded-xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-500">
+                No task requests submitted by clients yet.
+              </p>
+            ) : (
+              <ul className="divide-y divide-slate-100">
+                {taskRequests.map((request) => (
+                  <li key={request.id} className="flex flex-col gap-3 py-4 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="font-medium text-slate-900">{request.title}</p>
+                        <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium capitalize ${TASK_REQUEST_STATUS_BADGE[request.status] || TASK_REQUEST_STATUS_BADGE.pending}`}>
+                          {request.status}
+                        </span>
+                      </div>
+                      {request.description ? (
+                        <p className="mt-1 text-sm text-slate-500">{request.description}</p>
+                      ) : null}
+                      <p className="mt-1 text-xs text-slate-400">
+                        Submitted by {request.submitted_by?.full_name || "a client"} · {new Date(request.created_at).toLocaleDateString()}
+                      </p>
+                    </div>
+
+                    {request.status === "pending" ? (
+                      <div className="flex shrink-0 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => openConvertModal(request)}
+                          className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
+                        >
+                          Convert to Task
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRejectRequest(request)}
+                          className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50"
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        ) : null}
       </main>
 
       {canCreateTasks && isTaskModalOpen ? (
@@ -1867,6 +2090,157 @@ export default function ProjectDetailPage() {
                   className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
                 >
                   {isCreatingReport ? "Creating..." : "Create Report"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
+      {isInviteClientModalOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 px-4 py-6">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+            <div className="mb-6 flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-semibold text-slate-900">Invite Client</h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  They'll get an email to set up an account and view{" "}
+                  <span className="font-medium text-slate-700">{project.name}</span>'s progress.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsInviteClientModalOpen(false)}
+                className="rounded-lg px-3 py-2 text-sm font-semibold text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleInviteClient} className="space-y-5">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-slate-700">Client email</label>
+                <input
+                  type="email"
+                  value={inviteClientEmail}
+                  onChange={(event) => setInviteClientEmail(event.target.value)}
+                  required
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  placeholder="client@example.com"
+                />
+              </div>
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsInviteClientModalOpen(false)}
+                  className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isInvitingClient}
+                  className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+                >
+                  {isInvitingClient ? "Sending..." : "Send Invitation"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
+      {convertingRequest ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 px-4 py-6">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl">
+            <div className="mb-6 flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-semibold text-slate-900">Convert to Task</h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  "{convertingRequest.title}" will become a task under{" "}
+                  <span className="font-medium text-slate-700">{project.name}</span>.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setConvertingRequest(null)}
+                className="rounded-lg px-3 py-2 text-sm font-semibold text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleConvertRequest} className="space-y-5">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-slate-700">Team</label>
+                <select
+                  name="team_id"
+                  value={convertForm.team_id}
+                  onChange={handleConvertFormChange}
+                  required
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                >
+                  <option value="">Select team</option>
+                  {teams.map((team) => (
+                    <option key={team.id} value={team.id}>
+                      {team.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-slate-700">Assignee (optional)</label>
+                <select
+                  name="assignee_id"
+                  value={convertForm.assignee_id}
+                  onChange={handleConvertFormChange}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                >
+                  <option value="">Unassigned</option>
+                  {assignees.map((assignee) => (
+                    <option key={assignee.id} value={assignee.id}>
+                      {assignee.full_name} — {assignee.role}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Priority</label>
+                  <select
+                    name="priority"
+                    value={convertForm.priority}
+                    onChange={handleConvertFormChange}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  >
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Due date</label>
+                  <DatePicker name="due_date" value={convertForm.due_date} onChange={handleConvertFormChange} />
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setConvertingRequest(null)}
+                  className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isConvertingRequest || !teams.length}
+                  className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+                >
+                  {isConvertingRequest ? "Converting..." : "Convert to Task"}
                 </button>
               </div>
             </form>

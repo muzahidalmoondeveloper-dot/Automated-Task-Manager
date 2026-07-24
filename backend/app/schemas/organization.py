@@ -138,10 +138,15 @@ class InvitationRead(BaseModel):
     organization_id: uuid.UUID
     email: str
     role: str
+    project_id: int | None = None
     expires_at: datetime
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class ClientInvitationRequest(BaseModel):
+    email: EmailStr
 
 
 class AcceptInvitationRequest(BaseModel):

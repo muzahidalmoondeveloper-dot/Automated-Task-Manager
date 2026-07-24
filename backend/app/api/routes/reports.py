@@ -6,6 +6,7 @@ from fastapi import status as http_status
 from fastapi.responses import Response
 
 from app.core.auth_errors import AppException, ErrorDef
+from app.core.org_roles import CLIENT
 from app.core.tenant import TenantContext, get_tenant_context, require_org_manager
 from app.models.report import ReportContent
 from app.repositories.project_repository import ProjectRepository
@@ -41,8 +42,20 @@ async def _get_report_or_404(tenant: TenantContext, report_id: int):
     return report
 
 
-def _can_view(tenant: TenantContext, report) -> bool:
-    return tenant.is_manager_or_above or report.team_visible
+def _is_client_safe(report) -> bool:
+    """A Client may only ever see finalized, latest-version, client-type reports."""
+    return report.report_type == "client" and report.status == "finalized" and report.is_latest_version
+
+
+async def _can_view(tenant: TenantContext, report) -> bool:
+    if tenant.is_manager_or_above:
+        return True
+    if tenant.org_role == CLIENT:
+        if not _is_client_safe(report):
+            return False
+        project_repo = ProjectRepository(tenant.db, tenant.organization_id)
+        return await project_repo.is_member(report.project_id, tenant.user.id)
+    return report.team_visible
 
 
 @router.get("", response_model=list[ReportListItem])
@@ -59,6 +72,13 @@ async def list_reports(
     )
     if tenant.is_manager_or_above:
         return reports
+    if tenant.org_role == CLIENT:
+        project_repo = ProjectRepository(tenant.db, tenant.organization_id)
+        visible = []
+        for r in reports:
+            if _is_client_safe(r) and await project_repo.is_member(r.project_id, tenant.user.id):
+                visible.append(r)
+        return visible
     return [r for r in reports if r.team_visible]
 
 
@@ -120,7 +140,7 @@ async def upsert_branding(payload: ClientBrandingUpsert, tenant: TenantContext =
 @router.get("/{report_id}", response_model=ReportDetail)
 async def get_report(report_id: int, tenant: TenantContext = Depends(get_tenant_context)):
     report = await _get_report_or_404(tenant, report_id)
-    if not _can_view(tenant, report):
+    if not await _can_view(tenant, report):
         raise AppException(ErrorDef(code="REPORT_FORBIDDEN", status=http_status.HTTP_403_FORBIDDEN, message="You do not have access to this report."))
     return report
 
@@ -167,7 +187,7 @@ async def regenerate_report(report_id: int, tenant: TenantContext = Depends(requ
 
 async def _serve_pdf(tenant: TenantContext, report_id: int, *, as_attachment: bool) -> Response:
     report = await _get_report_or_404(tenant, report_id)
-    if not _can_view(tenant, report):
+    if not await _can_view(tenant, report):
         raise AppException(ErrorDef(code="REPORT_FORBIDDEN", status=http_status.HTTP_403_FORBIDDEN, message="You do not have access to this report."))
 
     pdf_service = PdfRenderService()
@@ -240,7 +260,7 @@ async def create_new_version(report_id: int, tenant: TenantContext = Depends(req
 @router.get("/{report_id}/versions", response_model=list[ReportListItem])
 async def list_versions(report_id: int, tenant: TenantContext = Depends(get_tenant_context)):
     report = await _get_report_or_404(tenant, report_id)
-    if not _can_view(tenant, report):
+    if not await _can_view(tenant, report):
         raise AppException(ErrorDef(code="REPORT_FORBIDDEN", status=http_status.HTTP_403_FORBIDDEN, message="You do not have access to this report."))
 
     root_id = report.parent_report_id or report.id

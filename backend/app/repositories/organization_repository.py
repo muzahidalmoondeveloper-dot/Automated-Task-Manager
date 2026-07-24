@@ -168,6 +168,7 @@ class OrganizationRepository:
         email: str,
         role: str,
         invited_by_id: int,
+        project_id: int | None = None,
     ) -> OrganizationInvitation:
         # Invalidate any existing pending invitations for same email+org
         existing = await self.db.execute(
@@ -185,6 +186,7 @@ class OrganizationRepository:
             organization_id=org_id,
             email=email.lower().strip(),
             role=role,
+            project_id=project_id,
             invited_by_id=invited_by_id,
             token=secrets.token_urlsafe(48),
             expires_at=datetime.now(timezone.utc) + timedelta(hours=INVITATION_EXPIRE_HOURS),

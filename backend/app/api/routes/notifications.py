@@ -17,6 +17,7 @@ router = APIRouter(prefix="/notifications", tags=["Notifications"])
 class NotificationRead(BaseModel):
     id: int
     task_id: int | None
+    project_id: int | None
     title: str
     message: str
     type: str

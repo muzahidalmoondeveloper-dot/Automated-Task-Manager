@@ -27,6 +27,7 @@ from app.core.token_cache import TokenCache, get_token_cache
 from app.models.organization import Organization, OrganizationMembership
 from app.models.user import User
 from app.repositories.organization_repository import OrganizationRepository
+from app.repositories.project_repository import ProjectRepository
 from app.repositories.refresh_token_repository import RefreshTokenRepository
 from app.repositories.user_repository import UserRepository
 from app.schemas.auth import (
@@ -37,6 +38,7 @@ from app.schemas.auth import (
     LoginRequest,
     LogoutRequest,
     RefreshTokenRequest,
+    RegisterAndAcceptInvitationRequest,
     ResendOTPRequest,
     ResetPasswordRequest,
     TokenResponse,
@@ -518,11 +520,75 @@ async def accept_invitation(
     else:
         membership = existing
 
+    if invitation.project_id is not None:
+        project_repo = ProjectRepository(db, invitation.organization_id)
+        await project_repo.add_member(invitation.project_id, current_user.id)
+
     await org_repo.accept_invitation(invitation)
     await db.commit()
 
     return await _issue_token_pair(
         current_user, db, token_cache,
+        org_id=invitation.organization_id,
+        org_role=membership.role,
+    )
+
+
+@router.post("/register-and-accept-invitation", response_model=TokenResponse)
+async def register_and_accept_invitation(
+    payload: RegisterAndAcceptInvitationRequest,
+    db: AsyncSession = Depends(get_db),
+    token_cache: TokenCache = Depends(get_token_cache),
+):
+    """One-step invitation acceptance for people with no existing account
+    (primarily Client invitations) — creates the User, org membership, and
+    (if the invitation is project-scoped) ProjectMembership, all at once.
+    The invitation token itself is the proof of email ownership, so no
+    separate OTP step is required, mirroring how token-based flows already
+    behave elsewhere in this app."""
+    pwd_check = validate_password_strength(payload.password)
+    if not pwd_check["valid"]:
+        raise AuthError.invalid_password(pwd_check["errors"])
+
+    org_repo = OrganizationRepository(db)
+    invitation = await org_repo.get_invitation_by_token(payload.token)
+
+    if invitation is None:
+        raise AppException(_INVITATION_NOT_FOUND)
+    if invitation.accepted_at is not None:
+        raise AppException(_INVITATION_ACCEPTED)
+
+    now = datetime.now(timezone.utc)
+    expires_at = invitation.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at < now:
+        raise AppException(_INVITATION_EXPIRED)
+
+    user_repo = UserRepository(db)
+    existing_user = await user_repo.get_by_email(invitation.email)
+    if existing_user is not None:
+        raise AuthError.email_exists()
+
+    user = await user_repo.create(UserCreate(
+        full_name=payload.full_name,
+        email=invitation.email,
+        password=payload.password,
+    ))
+    user.email_verified_at = now
+
+    membership = await org_repo.add_member(invitation.organization_id, user.id, invitation.role)
+
+    if invitation.project_id is not None:
+        project_repo = ProjectRepository(db, invitation.organization_id)
+        await project_repo.add_member(invitation.project_id, user.id)
+
+    await org_repo.accept_invitation(invitation)
+    await db.commit()
+    await db.refresh(user)
+
+    return await _issue_token_pair(
+        user, db, token_cache,
         org_id=invitation.organization_id,
         org_role=membership.role,
     )
@@ -560,11 +626,19 @@ async def invitation_preview(
     user_repo = UserRepository(db)
     existing_user = await user_repo.get_by_email(invitation.email)
 
+    project_name = None
+    if invitation.project_id is not None:
+        project_repo = ProjectRepository(db, invitation.organization_id)
+        project = await project_repo.get_by_id(invitation.project_id)
+        project_name = project.name if project else None
+
     return {
         "email": invitation.email,
         "role": invitation.role,
         "organization_name": invitation.organization.name if invitation.organization else None,
         "organization_id": str(invitation.organization_id),
+        "project_id": invitation.project_id,
+        "project_name": project_name,
         "expires_at": invitation.expires_at.isoformat(),
         "invited_by_name": inviter_name,
         # Lets the accept-invitation page show the single right action —

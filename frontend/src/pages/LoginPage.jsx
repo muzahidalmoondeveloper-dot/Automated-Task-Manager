@@ -126,6 +126,7 @@ export default function LoginPage() {
     resendOtp,
     isAuthenticated,
     isAuthLoading,
+    user,
   } = useAuth();
 
   const [step, setStep] = useState("login"); // "login" | "otp" | "select-org"
@@ -143,10 +144,11 @@ export default function LoginPage() {
   useEffect(() => {
     if (!isAuthLoading && isAuthenticated) {
       const redirect = searchParams.get("redirect");
-      const safePath = redirect && redirect.startsWith("/") ? redirect : "/dashboard";
+      const defaultPath = user?.role === "client" ? "/client" : "/dashboard";
+      const safePath = redirect && redirect.startsWith("/") ? redirect : defaultPath;
       navigate(safePath, { replace: true });
     }
-  }, [isAuthLoading, isAuthenticated, navigate, searchParams]);
+  }, [isAuthLoading, isAuthenticated, navigate, searchParams, user]);
 
   useEffect(() => {
     if (resendCooldown <= 0) return;

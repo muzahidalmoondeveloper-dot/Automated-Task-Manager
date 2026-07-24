@@ -97,6 +97,55 @@ class EmailService:
         if not success:
             logger.warning("Invitation email failed for %s: %s", to_email, err)
 
+    def send_client_invitation_email(
+        self,
+        *,
+        to_email: str,
+        org_name: str,
+        project_name: str,
+        inviter_name: str,
+        token: str,
+    ) -> None:
+        from app.core.config import get_settings
+        frontend_url = get_settings().FRONTEND_URL
+        accept_url = f"{frontend_url}/accept-invitation?token={token}"
+
+        if not settings.SMTP_HOST or not settings.SMTP_USERNAME or not settings.SMTP_PASSWORD:
+            logger.info(
+                "[DEV CLIENT INVITE] To: %s | Project: %s | Inviter: %s | Accept URL: %s",
+                to_email, project_name, inviter_name, accept_url,
+            )
+            return
+
+        subject = f"You've been invited to view {project_name}"
+
+        html = self._build_html(
+            subject=subject,
+            headline="You're invited to track a project!",
+            body_paragraphs=[
+                f"<strong>{inviter_name}</strong> has invited you to view the progress of "
+                f"<strong>{project_name}</strong> at <strong>{org_name}</strong>.",
+                "Click the button below to set up your account — you'll be able to view "
+                "the project's status and submit task requests.",
+            ],
+            details=[
+                ("Project", project_name),
+                ("Organization", org_name),
+                ("Invited by", inviter_name),
+            ],
+            cta_url=accept_url,
+            cta_label="View Invitation",
+        )
+
+        success, err = self._send_smtp(
+            to_email=to_email,
+            subject=subject,
+            html_body=html,
+            event_type="client_invitation",
+        )
+        if not success:
+            logger.warning("Client invitation email failed for %s: %s", to_email, err)
+
     # ═══════════════════════════════════════════════════════════════════════════
     # Existing OTP email (unchanged)
     # ═══════════════════════════════════════════════════════════════════════════
@@ -821,6 +870,133 @@ class EmailService:
 
         except Exception as exc:
             logger.exception("send_task_assigned_back FAILED | task_id=%s: %s", task.id, exc)
+
+    async def send_client_task_request(
+        self,
+        db: AsyncSession,
+        *,
+        task_request,
+        recipient,
+        submitted_by,
+    ) -> None:
+        """Notify a Project Manager / Owner / Admin that a client submitted a task request."""
+        today = date.today().isoformat()
+        dedup_key = f"client_task_request:{task_request.id}:{recipient.email}:{today}"
+
+        try:
+            if await self._is_duplicate(db, dedup_key):
+                logger.info("Duplicate skip | client_task_request | request=%s | to=%s", task_request.id, recipient.email)
+                return
+
+            project_name = (task_request.project.name if task_request.project else None) or "—"
+
+            subject = f"New Task Request: {task_request.title}"
+            html = self._build_html(
+                subject=subject,
+                headline="A client submitted a new task request",
+                body_paragraphs=[
+                    f"Hi {recipient.full_name},",
+                    f"<strong>{submitted_by.full_name}</strong> submitted a new task request "
+                    f"for project <strong>{project_name}</strong>. Review it and convert it into a "
+                    "task when ready.",
+                ],
+                details=[
+                    ("Request", task_request.title),
+                    ("Project", project_name),
+                    ("Submitted By", submitted_by.full_name),
+                ],
+                cta_url=f"{settings.FRONTEND_BASE_URL}/projects/{task_request.project_id}",
+                cta_label="Review Task Request",
+            )
+
+            success, err = self._send_smtp(
+                to_email=recipient.email,
+                subject=subject,
+                html_body=html,
+                event_type="client_task_request",
+            )
+            await self._log(
+                db,
+                task_id=None,
+                recipient_user_id=recipient.id,
+                recipient_email=recipient.email,
+                event_type="client_task_request",
+                dedup_key=dedup_key,
+                success=success,
+                error_message=err,
+            )
+            logger.info(
+                "send_client_task_request DONE | request_id=%s | to=%s | success=%s",
+                task_request.id, recipient.email, success,
+            )
+        except Exception as exc:
+            logger.exception("send_client_task_request FAILED | request_id=%s: %s", task_request.id, exc)
+
+    async def send_task_request_reviewed(
+        self,
+        db: AsyncSession,
+        *,
+        task_request,
+        client,
+        reviewed_by,
+        approved: bool,
+    ) -> None:
+        """Notify the client whose task request was converted into a task, or rejected."""
+        today = date.today().isoformat()
+        dedup_key = f"task_request_reviewed:{task_request.id}:{client.email}:{today}"
+
+        try:
+            if await self._is_duplicate(db, dedup_key):
+                logger.info("Duplicate skip | task_request_reviewed | request=%s | to=%s", task_request.id, client.email)
+                return
+
+            project_name = (task_request.project.name if task_request.project else None) or "—"
+            subject = (
+                f"Task Request Approved: {task_request.title}" if approved
+                else f"Task Request Declined: {task_request.title}"
+            )
+            headline = "Your task request was approved" if approved else "Your task request was declined"
+            body = (
+                f"<strong>{reviewed_by.full_name}</strong> reviewed your task request and created a task from it."
+                if approved else
+                f"<strong>{reviewed_by.full_name}</strong> reviewed your task request and was unable to proceed with it."
+            )
+
+            html = self._build_html(
+                subject=subject,
+                headline=headline,
+                body_paragraphs=[f"Hi {client.full_name},", body],
+                details=[
+                    ("Request", task_request.title),
+                    ("Project", project_name),
+                    ("Reviewed By", reviewed_by.full_name),
+                ],
+                cta_url=f"{settings.FRONTEND_BASE_URL}/client/projects/{task_request.project_id}",
+                cta_label="View Project",
+            )
+
+            success, err = self._send_smtp(
+                to_email=client.email,
+                subject=subject,
+                html_body=html,
+                event_type="task_request_reviewed",
+            )
+            await self._log(
+                db,
+                task_id=None,
+                recipient_user_id=client.id,
+                recipient_email=client.email,
+                event_type="task_request_reviewed",
+                dedup_key=dedup_key,
+                success=success,
+                error_message=err,
+            )
+            logger.info(
+                "send_task_request_reviewed DONE | request_id=%s | to=%s | success=%s",
+                task_request.id, client.email, success,
+            )
+        except Exception as exc:
+            logger.exception("send_task_request_reviewed FAILED | request_id=%s: %s", task_request.id, exc)
 
     # ─────────────────────────────────────────────────────────────────────────
 

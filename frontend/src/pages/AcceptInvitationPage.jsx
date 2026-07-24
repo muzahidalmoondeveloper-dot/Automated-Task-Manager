@@ -3,14 +3,21 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import toast from "react-hot-toast";
 
 import { invitationApi } from "../api/invitationApi";
+import { authApi } from "../api/authApi";
 import { useAuth } from "../context/AuthContext";
 
 const ROLE_LABELS = {
   owner: "Owner",
   admin: "Admin",
   team_manager: "Team Manager",
+  project_manager: "Project Manager",
   team_member: "Team Member",
+  client: "Client",
 };
+
+function redirectPathForRole(role) {
+  return role === "client" ? "/client" : "/dashboard";
+}
 
 export default function AcceptInvitationPage() {
   const [searchParams] = useSearchParams();
@@ -22,6 +29,10 @@ export default function AcceptInvitationPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [accepting, setAccepting] = useState(false);
+
+  const [setupForm, setSetupForm] = useState({ full_name: "", password: "", confirm_password: "" });
+  const [isSettingUp, setIsSettingUp] = useState(false);
+  const [setupError, setSetupError] = useState("");
 
   useEffect(() => {
     if (!token) {
@@ -42,10 +53,41 @@ export default function AcceptInvitationPage() {
       const response = await invitationApi.accept(token);
       loginWithToken(response.access_token, response.user, null, response.refresh_token);
       toast.success(`You've joined ${preview?.organization_name || "the organization"}!`);
-      navigate("/dashboard", { replace: true });
+      navigate(redirectPathForRole(response.user?.role), { replace: true });
     } catch (err) {
       toast.error(err.message || "Failed to accept invitation.");
       setAccepting(false);
+    }
+  }
+
+  function handleSetupFormChange(event) {
+    const { name, value } = event.target;
+    setSetupForm((current) => ({ ...current, [name]: value }));
+  }
+
+  async function handleSetupAccount(event) {
+    event.preventDefault();
+    setSetupError("");
+
+    if (setupForm.password !== setupForm.confirm_password) {
+      setSetupError("Passwords do not match.");
+      return;
+    }
+
+    try {
+      setIsSettingUp(true);
+      const response = await authApi.registerAndAcceptInvitation({
+        token,
+        full_name: setupForm.full_name,
+        password: setupForm.password,
+      });
+      loginWithToken(response.access_token, response.user, null, response.refresh_token);
+      toast.success(`You've joined ${preview?.organization_name || "the organization"}!`);
+      navigate(redirectPathForRole(response.user?.role), { replace: true });
+    } catch (err) {
+      setSetupError(err.message || "Failed to set up your account.");
+    } finally {
+      setIsSettingUp(false);
     }
   }
 
@@ -107,6 +149,12 @@ export default function AcceptInvitationPage() {
             <span className="text-slate-500">Organization</span>
             <span className="font-medium text-slate-900">{preview?.organization_name}</span>
           </div>
+          {preview?.project_name ? (
+            <div className="flex justify-between text-sm">
+              <span className="text-slate-500">Project</span>
+              <span className="font-medium text-slate-900">{preview.project_name}</span>
+            </div>
+          ) : null}
         </div>
 
         {isAuthenticated ? (
@@ -131,17 +179,62 @@ export default function AcceptInvitationPage() {
             </Link>
           </div>
         ) : (
-          <div className="space-y-3">
+          <form onSubmit={handleSetupAccount} className="space-y-4">
             <p className="text-center text-sm text-slate-600">
-              No account found for this email yet. Create one to accept this invitation.
+              No account found for this email yet. Set one up below to accept this invitation.
             </p>
-            <Link
-              to={`/register?invite=${encodeURIComponent(token)}`}
-              className="block w-full rounded-lg bg-slate-900 px-4 py-2.5 text-center text-sm font-semibold text-white hover:bg-slate-800"
+
+            {setupError ? (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {setupError}
+              </div>
+            ) : null}
+
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">Full name</label>
+              <input
+                name="full_name"
+                value={setupForm.full_name}
+                onChange={handleSetupFormChange}
+                required
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">Password</label>
+              <input
+                type="password"
+                name="password"
+                value={setupForm.password}
+                onChange={handleSetupFormChange}
+                required
+                minLength={8}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">Confirm password</label>
+              <input
+                type="password"
+                name="confirm_password"
+                value={setupForm.confirm_password}
+                onChange={handleSetupFormChange}
+                required
+                minLength={8}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={isSettingUp}
+              className="w-full rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Create account to accept
-            </Link>
-          </div>
+              {isSettingUp ? "Setting up..." : "Create Account & Accept"}
+            </button>
+          </form>
         )}
       </div>
     </div>

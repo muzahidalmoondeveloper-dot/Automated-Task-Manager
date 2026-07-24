@@ -105,6 +105,12 @@ class OrganizationInvitation(Base):
     )
     email: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
     role: Mapped[str] = mapped_column(String(50), nullable=False, default=TEAM_MEMBER)
+    # Set only for a client invitation — scopes the resulting ProjectMembership
+    # to this one project. Null for ordinary org-wide staff invitations.
+    project_id: Mapped[int | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     invited_by_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
