@@ -39,6 +39,7 @@ class OrgValueRead(BaseModel):
 class ObjectiveCreate(BaseModel):
     title: str = Field(min_length=1, max_length=255)
     description: str | None = None
+    icon: str | None = None
     status: str = "active"
     progress: int = Field(default=0, ge=0, le=100)
     due_date: date | None = None
@@ -49,6 +50,7 @@ class ObjectiveCreate(BaseModel):
 class ObjectiveUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = None
+    icon: str | None = None
     status: str | None = None
     progress: int | None = Field(default=None, ge=0, le=100)
     due_date: date | None = None
@@ -73,6 +75,7 @@ class ObjectiveRead(BaseModel):
     id: int
     title: str
     description: str | None
+    icon: str | None = None
     status: str
     progress: int
     due_date: date | None

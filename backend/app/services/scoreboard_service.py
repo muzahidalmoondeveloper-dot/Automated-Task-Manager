@@ -23,6 +23,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.org_roles import TEAM_MEMBER
+from app.models.organization import OrganizationMembership
 from app.models.task import Task
 
 PERFORMANCE_LEVELS = (
@@ -419,3 +421,434 @@ def build_team_insights(
         bullets.append("No overdue tasks across the team right now.")
 
     return bullets
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Full-response builders — shared by the live Scoreboard API routes and the
+# Performance PDF report generator, so both surfaces always show the exact
+# same numbers (they call the identical code, not two implementations of the
+# same formula).
+# ─────────────────────────────────────────────────────────────────────────
+
+async def _build_trend_series(
+    db: AsyncSession,
+    org_id,
+    period: str,
+    anchor_start: date,
+    anchor_end: date,
+    *,
+    employee_id: int | None = None,
+    team_id: int | None = None,
+    project_id: int | None = None,
+    count: int = 6,
+) -> list[dict]:
+    points: list[dict] = []
+    for window_start, window_end in trailing_periods(period, anchor_start, anchor_end, count=count):
+        if employee_id is not None:
+            window_tasks = await fetch_eligible_tasks(
+                db, org_id, employee_id, window_start, window_end, project_id, team_id,
+            )
+        else:
+            window_tasks = await fetch_eligible_team_tasks(
+                db, org_id, team_id, window_start, window_end, project_id,
+            )
+        window_result = compute_scoreboard(window_tasks)
+        label = window_start.strftime("%b %d") if period == "this_week" else window_start.strftime("%b %Y")
+        points.append({
+            "period_label": label,
+            "period_start": window_start,
+            "period_end": window_end,
+            "rounded_score": window_result.rounded_score if window_result.has_data else None,
+            "completed_tasks": window_result.total_completed if window_result.has_data else None,
+            "overdue_tasks": window_result.overdue if window_result.has_data else None,
+            "has_data": window_result.has_data,
+        })
+    return points
+
+
+@dataclass
+class EmployeeScoreboardData:
+    period: str
+    period_start: date
+    period_end: date
+    current: ScoreboardResult
+    previous: ScoreboardResult | None
+    change_from_previous: int | None
+    trend: list[dict]
+    explanation: list[str]
+
+
+async def build_employee_scoreboard(
+    db: AsyncSession,
+    org_id,
+    employee_id: int,
+    period: str,
+    project_id: int | None = None,
+    team_id: int | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> EmployeeScoreboardData:
+    """The single source of truth for an employee's scoreboard numbers —
+    called by both `GET /users/{id}/scoreboard` and the Employee Performance
+    PDF report, so they can never disagree."""
+    period_start, period_end = resolve_period(period, start_date, end_date)
+
+    current_tasks = await fetch_eligible_tasks(db, org_id, employee_id, period_start, period_end, project_id, team_id)
+    current = compute_scoreboard(current_tasks)
+
+    prev_start, prev_end = previous_period(period, period_start, period_end)
+    prev_tasks = await fetch_eligible_tasks(db, org_id, employee_id, prev_start, prev_end, project_id, team_id)
+    previous = compute_scoreboard(prev_tasks)
+
+    change_from_previous = None
+    if current.has_data and previous.has_data:
+        change_from_previous = current.rounded_score - previous.rounded_score
+
+    trend = await _build_trend_series(
+        db, org_id, period, period_start, period_end,
+        employee_id=employee_id, team_id=team_id, project_id=project_id,
+    )
+    explanation = build_explanation(current, previous)
+
+    return EmployeeScoreboardData(
+        period=period, period_start=period_start, period_end=period_end,
+        current=current, previous=previous, change_from_previous=change_from_previous,
+        trend=trend, explanation=explanation,
+    )
+
+
+@dataclass
+class TeamMemberScoreboardRow:
+    user_id: int
+    full_name: str
+    role: str
+    result: ScoreboardResult
+    rank: int = 0
+
+
+@dataclass
+class TeamScoreboardData:
+    period: str
+    period_start: date
+    period_end: date
+    current: ScoreboardResult
+    previous: ScoreboardResult | None
+    change_from_previous: int | None
+    trend: list[dict]
+    previous_trend: list[dict]
+    members: list[TeamMemberScoreboardRow]
+    insights: list[str]
+
+
+def _member_sort_key(row: TeamMemberScoreboardRow):
+    # Tie-breakers: score desc -> on-time rate desc -> overdue asc -> completed desc.
+    # Members with no data sort to the bottom.
+    r = row.result
+    return (
+        r.has_data is False,
+        -(r.rounded_score if r.has_data else 0),
+        -(r.on_time_rate if r.has_data else 0),
+        r.overdue,
+        -r.total_completed,
+    )
+
+
+async def build_team_scoreboard(
+    db: AsyncSession,
+    org_id,
+    team,
+    period: str,
+    project_id: int | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> TeamScoreboardData:
+    """The single source of truth for a team's scoreboard numbers — called by
+    both `GET /teams/{id}/scoreboard` and the Team Performance PDF report.
+    `team` must be a `Team` ORM object with `memberships` (and each
+    membership's `.user`) eagerly loaded, as returned by
+    `TeamRepository.get_by_id`."""
+    period_start, period_end = resolve_period(period, start_date, end_date)
+
+    current_tasks = await fetch_eligible_team_tasks(db, org_id, team.id, period_start, period_end, project_id)
+    current = compute_scoreboard(current_tasks)
+
+    prev_start, prev_end = previous_period(period, period_start, period_end)
+    prev_tasks = await fetch_eligible_team_tasks(db, org_id, team.id, prev_start, prev_end, project_id)
+    previous = compute_scoreboard(prev_tasks)
+
+    change_from_previous = None
+    if current.has_data and previous.has_data:
+        change_from_previous = current.rounded_score - previous.rounded_score
+
+    trend = await _build_trend_series(
+        db, org_id, period, period_start, period_end, team_id=team.id, project_id=project_id,
+    )
+    earliest_window_start, earliest_window_end = trailing_periods(period, period_start, period_end, count=6)[0]
+    prev_anchor_start, prev_anchor_end = previous_period(period, earliest_window_start, earliest_window_end)
+    previous_trend = await _build_trend_series(
+        db, org_id, period, prev_anchor_start, prev_anchor_end, team_id=team.id, project_id=project_id,
+    )
+
+    member_rows: list[TeamMemberScoreboardRow] = []
+    for membership in team.memberships:
+        member_tasks = await fetch_eligible_tasks(
+            db, org_id, membership.user_id, period_start, period_end, project_id, team.id,
+        )
+        member_result = compute_scoreboard(member_tasks)
+        member_rows.append(TeamMemberScoreboardRow(
+            user_id=membership.user_id,
+            full_name=membership.user.full_name,
+            role=membership.user.role,
+            result=member_result,
+        ))
+
+    member_rows.sort(key=_member_sort_key)
+    for i, row in enumerate(member_rows, start=1):
+        row.rank = i
+
+    insights = build_team_insights(current, previous, [(m.full_name, m.result) for m in member_rows])
+
+    return TeamScoreboardData(
+        period=period, period_start=period_start, period_end=period_end,
+        current=current, previous=previous, change_from_previous=change_from_previous,
+        trend=trend, previous_trend=previous_trend, members=member_rows, insights=insights,
+    )
+
+
+@dataclass
+class OrgScoreboardRow:
+    user_id: int
+    full_name: str
+    role: str
+    manager_id: int | None
+    manager_name: str | None
+    team_id: int | None
+    team_name: str | None
+    result: ScoreboardResult
+    rank: int = 0
+
+
+async def build_organization_scoreboard(
+    db: AsyncSession,
+    org_id,
+    teams,  # list[Team], already permission-scoped by the caller (own team(s) or all)
+    period: str,
+    manager_id: int | None = None,
+    team_id: int | None = None,
+    employee_id: int | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> tuple[str, date, date, list[OrgScoreboardRow]]:
+    """Company-wide leaderboard ranking every visible *employee* by score —
+    "employee" here means org role Team Member specifically, excluding
+    Owners/Admins/Team Managers/Project Managers even if one of them happens
+    to also be a member of a team (e.g. a manager who is on their own team's
+    roster). Use `build_team_rankings`/`build_manager_rankings` for those.
+
+    Each employee appears once, attributed to the earliest team they joined
+    (among the caller-visible `teams`) for the Team/Manager columns — a user
+    can belong to multiple teams here, but their score itself is computed
+    across *all* of their eligible tasks regardless of team, matching the
+    individual Employee Scoreboard's own numbers exactly (single source of
+    truth: `fetch_eligible_tasks` + `compute_scoreboard`).
+    """
+    period_start, period_end = resolve_period(period, start_date, end_date)
+
+    earliest: dict[int, tuple] = {}  # user_id -> (team, membership.created_at, user)
+    for team in teams:
+        for m in team.memberships:
+            if m.user is None:
+                continue
+            existing = earliest.get(m.user_id)
+            if existing is None or m.created_at < existing[1]:
+                earliest[m.user_id] = (team, m.created_at, m.user)
+
+    if earliest:
+        role_result = await db.execute(
+            select(OrganizationMembership.user_id).where(
+                OrganizationMembership.organization_id == org_id,
+                OrganizationMembership.user_id.in_(earliest.keys()),
+                OrganizationMembership.role == TEAM_MEMBER,
+            )
+        )
+        team_member_ids = {row[0] for row in role_result.all()}
+        earliest = {uid: v for uid, v in earliest.items() if uid in team_member_ids}
+
+    candidates = list(earliest.items())
+    if employee_id is not None:
+        candidates = [c for c in candidates if c[0] == employee_id]
+    if team_id is not None:
+        candidates = [c for c in candidates if c[1][0].id == team_id]
+    if manager_id is not None:
+        candidates = [c for c in candidates if c[1][0].team_manager_id == manager_id]
+
+    rows: list[OrgScoreboardRow] = []
+    for user_id, (team, _joined_at, user) in candidates:
+        tasks = await fetch_eligible_tasks(db, org_id, user_id, period_start, period_end, None, None)
+        result = compute_scoreboard(tasks)
+        rows.append(OrgScoreboardRow(
+            user_id=user_id,
+            full_name=user.full_name,
+            role=user.role,
+            manager_id=team.team_manager_id,
+            manager_name=team.team_manager.full_name if team.team_manager else None,
+            team_id=team.id,
+            team_name=team.name,
+            result=result,
+        ))
+
+    rows.sort(key=_member_sort_key)
+    for i, row in enumerate(rows, start=1):
+        row.rank = i
+
+    return period, period_start, period_end, rows
+
+
+@dataclass
+class TeamRankingRow:
+    team_id: int
+    team_name: str
+    manager_id: int | None
+    manager_name: str | None
+    member_count: int
+    result: ScoreboardResult
+    rank: int = 0
+
+
+async def build_team_rankings(
+    db: AsyncSession,
+    org_id,
+    teams,  # list[Team], already permission-scoped by the caller
+    period: str,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> tuple[str, date, date, list[TeamRankingRow]]:
+    """Ranks every caller-visible team by its own team-wide score — the same
+    number shown on that team's own Team Scoreboard tab (pooling every
+    member's eligible tasks, not one row per member)."""
+    period_start, period_end = resolve_period(period, start_date, end_date)
+
+    rows: list[TeamRankingRow] = []
+    for team in teams:
+        tasks = await fetch_eligible_team_tasks(db, org_id, team.id, period_start, period_end)
+        result = compute_scoreboard(tasks)
+        rows.append(TeamRankingRow(
+            team_id=team.id,
+            team_name=team.name,
+            manager_id=team.team_manager_id,
+            manager_name=team.team_manager.full_name if team.team_manager else None,
+            member_count=len(team.memberships),
+            result=result,
+        ))
+
+    rows.sort(key=_member_sort_key)
+    for i, row in enumerate(rows, start=1):
+        row.rank = i
+
+    return period, period_start, period_end, rows
+
+
+@dataclass
+class ManagerRankingRow:
+    manager_id: int
+    manager_name: str
+    team_count: int
+    employee_count: int
+    result: ScoreboardResult
+    rank: int = 0
+
+
+async def build_manager_rankings(
+    db: AsyncSession,
+    org_id,
+    teams,  # list[Team], already permission-scoped by the caller
+    period: str,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> tuple[str, date, date, list[ManagerRankingRow]]:
+    """Ranks every caller-visible manager by the combined score across every
+    team they manage — pools all of their teams' eligible tasks into a single
+    `compute_scoreboard` call so a manager of multiple teams is scored on
+    their overall managed output, not an average of separate team scores."""
+    period_start, period_end = resolve_period(period, start_date, end_date)
+
+    by_manager: dict[int, dict] = {}
+    for team in teams:
+        if team.team_manager is None:
+            continue
+        entry = by_manager.setdefault(team.team_manager_id, {
+            "manager": team.team_manager,
+            "teams": [],
+            "employee_ids": set(),
+        })
+        entry["teams"].append(team)
+        entry["employee_ids"].update(m.user_id for m in team.memberships)
+
+    rows: list[ManagerRankingRow] = []
+    for manager_id, entry in by_manager.items():
+        tasks: list[Task] = []
+        for team in entry["teams"]:
+            tasks.extend(await fetch_eligible_team_tasks(db, org_id, team.id, period_start, period_end))
+        result = compute_scoreboard(tasks)
+        rows.append(ManagerRankingRow(
+            manager_id=manager_id,
+            manager_name=entry["manager"].full_name,
+            team_count=len(entry["teams"]),
+            employee_count=len(entry["employee_ids"]),
+            result=result,
+        ))
+
+    rows.sort(key=_member_sort_key)
+    for i, row in enumerate(rows, start=1):
+        row.rank = i
+
+    return period, period_start, period_end, rows
+
+
+def _task_item(task: Task, today: date) -> dict:
+    return {
+        "id": task.id,
+        "name": task.name,
+        "project_id": task.project_id,
+        "project_name": task.project.name if task.project else None,
+        "priority": task.priority,
+        "due_date": task.due_date,
+        "completed_at": task.completed_at,
+        "status": task.status,
+        "score_impact": score_impact_label(task, today),
+    }
+
+
+async def build_employee_task_items(
+    db: AsyncSession,
+    org_id,
+    employee_id: int,
+    period_start: date,
+    period_end: date,
+    project_id: int | None = None,
+    team_id: int | None = None,
+    limit: int = 200,
+) -> list[dict]:
+    """Task-level detail rows for an employee's period — shared by
+    `GET /users/{id}/scoreboard/tasks` and the Employee Performance PDF."""
+    tasks = await fetch_eligible_tasks(db, org_id, employee_id, period_start, period_end, project_id, team_id)
+    tasks = sorted(tasks, key=lambda t: t.due_date or date.max)[:limit]
+    today = _today()
+    return [_task_item(t, today) for t in tasks]
+
+
+async def build_team_task_items(
+    db: AsyncSession,
+    org_id,
+    team_id: int,
+    period_start: date,
+    period_end: date,
+    project_id: int | None = None,
+    limit: int = 200,
+) -> list[dict]:
+    """Task-level detail rows for a team's period — shared by
+    `GET /teams/{id}/scoreboard/tasks` and the Team Performance PDF."""
+    tasks = await fetch_eligible_team_tasks(db, org_id, team_id, period_start, period_end, project_id)
+    tasks = sorted(tasks, key=lambda t: t.due_date or date.max)[:limit]
+    today = _today()
+    return [_task_item(t, today) for t in tasks]

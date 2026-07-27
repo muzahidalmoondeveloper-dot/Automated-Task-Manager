@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import toast from "react-hot-toast";
 
 import { useAuth } from "../context/AuthContext";
+import { useConfirm } from "../context/ConfirmContext";
 import { reportApi } from "../api/reportApi";
 import RichEditor from "../components/RichEditor";
 import ThemePicker from "../components/reports/ThemePicker";
@@ -39,6 +40,7 @@ function EmptyState({ label }) {
 }
 
 export default function ReportEditPage() {
+  const confirm = useConfirm();
   const { reportId } = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -110,7 +112,11 @@ export default function ReportEditPage() {
   }
 
   async function handleFinalize() {
-    if (!window.confirm("Finalize this report? It will be locked and a PDF will be generated.")) return;
+    const ok = await confirm({
+      message: "Finalize this report? It will be locked and a PDF will be generated.",
+      confirmLabel: "Finalize",
+    });
+    if (!ok) return;
     try {
       setIsFinalizing(true);
       const updated = await reportApi.finalize(reportId);

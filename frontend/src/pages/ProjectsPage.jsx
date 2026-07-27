@@ -4,6 +4,7 @@ import toast from "react-hot-toast";
 import { projectApi } from "../api/projectApi";
 import { userApi } from "../api/userApi";
 import { useAuth } from "../context/AuthContext";
+import { useConfirm } from "../context/ConfirmContext";
 
 const PROJECT_STATUS_OPTIONS = [
   { value: "active", label: "Active" },
@@ -73,6 +74,7 @@ function ThreeDotsIcon() {
 
 export default function ProjectsPage() {
   const { user } = useAuth();
+  const confirm = useConfirm();
   const canManageProjects =
     user?.role === "owner" || user?.role === "admin" || user?.role === "team_manager";
 
@@ -283,7 +285,7 @@ export default function ProjectsPage() {
   async function handleDelete(project) {
     setOpenActionMenuId(null);
 
-    const confirmed = window.confirm(`Delete ${project.name}?`);
+    const confirmed = await confirm({ message: `Delete ${project.name}?`, tone: "danger", confirmLabel: "Delete" });
 
     if (!confirmed) return;
 

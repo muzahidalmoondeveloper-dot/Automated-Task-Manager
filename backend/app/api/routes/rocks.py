@@ -82,6 +82,9 @@ async def update_rock(
             db.add(milestone)
 
     if payload.links is not None:
+        for l in list(rock.links):
+            await db.delete(l)
+        await db.flush()
         _apply_links(rock, payload.links)
 
     await db.commit()

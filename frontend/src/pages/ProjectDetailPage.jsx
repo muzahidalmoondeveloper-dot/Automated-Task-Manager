@@ -10,6 +10,7 @@ import { reportApi } from "../api/reportApi";
 import { projectInvitationApi } from "../api/projectInvitationApi";
 import { taskRequestApi } from "../api/taskRequestApi";
 import { useAuth } from "../context/AuthContext";
+import { useConfirm } from "../context/ConfirmContext";
 import DatePicker from "../components/DatePicker";
 
 const TASK_REQUEST_STATUS_BADGE = {
@@ -90,6 +91,7 @@ export default function ProjectDetailPage() {
   const { projectId } = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
+  const confirm = useConfirm();
 
   const [activeTab, setActiveTab] = useState("overview");
 
@@ -316,7 +318,8 @@ export default function ProjectDetailPage() {
   }
 
   async function handleDeleteReport(report) {
-    if (!window.confirm(`Delete "${report.title}"? This cannot be undone.`)) return;
+    const ok = await confirm({ message: `Delete "${report.title}"? This cannot be undone.`, tone: "danger", confirmLabel: "Delete" });
+    if (!ok) return;
     try {
       await reportApi.remove(report.id);
       setReports((current) => current.filter((r) => r.id !== report.id));
@@ -346,11 +349,12 @@ export default function ProjectDetailPage() {
 
   async function handleAddPmAssignment() {
     if (!selectedPmUserId) return;
+    const isReplacing = pmAssignments.length > 0;
     try {
       await projectApi.addMember(projectId, Number(selectedPmUserId));
       setSelectedPmUserId("");
       await loadPmAssignments();
-      toast.success("Project Manager assigned.");
+      toast.success(isReplacing ? "Project Manager replaced." : "Project Manager assigned.");
     } catch (err) {
       toast.error(err.message || "Failed to assign Project Manager.");
     }
@@ -402,7 +406,8 @@ export default function ProjectDetailPage() {
   }
 
   async function handleRevokeClientInvitation(invitationId) {
-    if (!window.confirm("Revoke this client invitation?")) return;
+    const ok = await confirm({ message: "Revoke this client invitation?", tone: "danger", confirmLabel: "Revoke" });
+    if (!ok) return;
     try {
       await projectInvitationApi.revoke(projectId, invitationId);
       setClientInvitations((current) => current.filter((inv) => inv.id !== invitationId));
@@ -462,7 +467,8 @@ export default function ProjectDetailPage() {
   }
 
   async function handleRejectRequest(request) {
-    if (!window.confirm(`Reject "${request.title}"?`)) return;
+    const ok = await confirm({ message: `Reject "${request.title}"?`, tone: "danger", confirmLabel: "Reject" });
+    if (!ok) return;
     try {
       const updated = await taskRequestApi.reject(projectId, request.id);
       setTaskRequests((current) => current.map((r) => (r.id === updated.id ? updated : r)));
@@ -567,7 +573,7 @@ export default function ProjectDetailPage() {
   async function handleDelete(task) {
     setOpenActionMenuId(null);
 
-    const confirmed = window.confirm(`Delete ${task.name}?`);
+    const confirmed = await confirm({ message: `Delete ${task.name}?`, tone: "danger", confirmLabel: "Delete" });
 
     if (!confirmed) return;
 
@@ -1271,21 +1277,21 @@ export default function ProjectDetailPage() {
               <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
                 <h2 className="text-base font-semibold text-slate-900">Project Manager</h2>
                 <p className="mt-1 text-sm text-slate-500">
-                  Project Managers assigned here can view this project, create tasks under it, and
-                  assign those tasks to any team.
+                  A project has exactly one Project Manager. They can view this project, create tasks
+                  under it, and assign those tasks to any team. Assigning a new one replaces the current one.
                 </p>
 
                 {isLoadingPmAssignments ? (
                   <p className="mt-4 text-sm text-slate-500">Loading...</p>
                 ) : (
-                  <div className="mt-4 flex flex-wrap gap-2">
+                  <div className="mt-4">
                     {pmAssignments.length === 0 ? (
                       <p className="text-sm text-slate-400">No Project Manager assigned yet.</p>
                     ) : (
                       pmAssignments.map((member) => (
                         <span
                           key={member.id}
-                          className="flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-700"
+                          className="flex w-fit items-center gap-2 rounded-full bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-700"
                         >
                           {member.full_name || member.email}
                           <button
@@ -1308,7 +1314,9 @@ export default function ProjectDetailPage() {
                     onChange={(event) => setSelectedPmUserId(event.target.value)}
                     className="w-full max-w-xs rounded-lg border border-slate-300 px-3 py-2 text-sm"
                   >
-                    <option value="">Select a Project Manager to assign</option>
+                    <option value="">
+                      {pmAssignments.length > 0 ? "Select a replacement Project Manager" : "Select a Project Manager to assign"}
+                    </option>
                     {users
                       .filter(
                         (u) =>
@@ -1327,7 +1335,7 @@ export default function ProjectDetailPage() {
                     disabled={!selectedPmUserId}
                     className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
                   >
-                    Assign
+                    {pmAssignments.length > 0 ? "Replace" : "Assign"}
                   </button>
                 </div>
               </div>

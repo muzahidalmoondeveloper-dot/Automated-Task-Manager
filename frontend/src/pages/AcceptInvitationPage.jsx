@@ -5,6 +5,12 @@ import toast from "react-hot-toast";
 import { invitationApi } from "../api/invitationApi";
 import { authApi } from "../api/authApi";
 import { useAuth } from "../context/AuthContext";
+import {
+  EyeOnIcon,
+  EyeOffIcon,
+  PasswordStrengthBar,
+  PasswordRequirementsChecklist,
+} from "../components/auth/PasswordRequirements";
 
 const ROLE_LABELS = {
   owner: "Owner",
@@ -33,6 +39,9 @@ export default function AcceptInvitationPage() {
   const [setupForm, setSetupForm] = useState({ full_name: "", password: "", confirm_password: "" });
   const [isSettingUp, setIsSettingUp] = useState(false);
   const [setupError, setSetupError] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [passwordFocused, setPasswordFocused] = useState(false);
 
   useEffect(() => {
     if (!token) {
@@ -203,28 +212,67 @@ export default function AcceptInvitationPage() {
 
             <div>
               <label className="mb-1 block text-sm font-medium text-slate-700">Password</label>
-              <input
-                type="password"
-                name="password"
-                value={setupForm.password}
-                onChange={handleSetupFormChange}
-                required
-                minLength={8}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              />
+              <div className="relative">
+                <input
+                  type={showPassword ? "text" : "password"}
+                  name="password"
+                  autoComplete="new-password"
+                  value={setupForm.password}
+                  onChange={handleSetupFormChange}
+                  onFocus={() => setPasswordFocused(true)}
+                  onBlur={() => setPasswordFocused(false)}
+                  required
+                  minLength={8}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 pr-11 text-sm"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-slate-400 transition-colors hover:text-slate-700"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                >
+                  {showPassword ? <EyeOnIcon /> : <EyeOffIcon />}
+                </button>
+              </div>
+
+              {setupForm.password.length > 0 && (
+                <PasswordStrengthBar password={setupForm.password} />
+              )}
+
+              {(passwordFocused || setupForm.password.length > 0) && (
+                <PasswordRequirementsChecklist password={setupForm.password} />
+              )}
             </div>
 
             <div>
               <label className="mb-1 block text-sm font-medium text-slate-700">Confirm password</label>
-              <input
-                type="password"
-                name="confirm_password"
-                value={setupForm.confirm_password}
-                onChange={handleSetupFormChange}
-                required
-                minLength={8}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              />
+              <div className="relative">
+                <input
+                  type={showConfirmPassword ? "text" : "password"}
+                  name="confirm_password"
+                  autoComplete="new-password"
+                  value={setupForm.confirm_password}
+                  onChange={handleSetupFormChange}
+                  required
+                  minLength={8}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 pr-11 text-sm"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmPassword((v) => !v)}
+                  className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-slate-400 transition-colors hover:text-slate-700"
+                  aria-label={showConfirmPassword ? "Hide password" : "Show password"}
+                >
+                  {showConfirmPassword ? <EyeOnIcon /> : <EyeOffIcon />}
+                </button>
+              </div>
+              {setupForm.confirm_password.length > 0 && (
+                <p className={`mt-1.5 text-xs font-medium ${
+                  setupForm.confirm_password === setupForm.password ? "text-emerald-600" : "text-red-500"
+                }`}>
+                  {setupForm.confirm_password === setupForm.password ? "Passwords match" : "Passwords do not match"}
+                </p>
+              )}
             </div>
 
             <button

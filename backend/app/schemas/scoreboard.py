@@ -104,3 +104,70 @@ class TeamScoreboardResponse(BaseModel):
     trend: list[ScoreHistoryPoint]
     previous_trend: list[ScoreHistoryPoint]
     insights: list[str]
+
+
+class OrgScoreboardEmployeeRow(BaseModel):
+    rank: int
+    user_id: int
+    full_name: str
+    role: str
+    manager_id: int | None = None
+    manager_name: str | None = None
+    team_id: int | None = None
+    team_name: str | None = None
+    has_data: bool
+    rounded_score: int | None = None
+    performance_level: str | None = None
+    total_completed: int
+    on_time_rate: float
+    overdue: int
+
+
+class OrgScoreboardResponse(BaseModel):
+    period: str
+    period_start: date
+    period_end: date
+    employees: list[OrgScoreboardEmployeeRow]
+
+
+class TeamRankingRow(BaseModel):
+    rank: int
+    team_id: int
+    team_name: str
+    manager_id: int | None = None
+    manager_name: str | None = None
+    member_count: int
+    has_data: bool
+    rounded_score: int | None = None
+    performance_level: str | None = None
+    total_completed: int
+    on_time_rate: float
+    overdue: int
+
+
+class TeamRankingResponse(BaseModel):
+    period: str
+    period_start: date
+    period_end: date
+    teams: list[TeamRankingRow]
+
+
+class ManagerRankingRow(BaseModel):
+    rank: int
+    manager_id: int
+    manager_name: str
+    team_count: int
+    employee_count: int
+    has_data: bool
+    rounded_score: int | None = None
+    performance_level: str | None = None
+    total_completed: int
+    on_time_rate: float
+    overdue: int
+
+
+class ManagerRankingResponse(BaseModel):
+    period: str
+    period_start: date
+    period_end: date
+    managers: list[ManagerRankingRow]

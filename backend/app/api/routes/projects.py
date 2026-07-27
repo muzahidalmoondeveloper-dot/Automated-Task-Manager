@@ -12,6 +12,7 @@ from app.core.tenant import TenantContext, get_tenant_context, require_org_admin
 from app.models.issue import Issue
 from app.models.kpi import KPI
 from app.models.objective import Objective
+from app.models.organization import OrganizationMembership
 from app.models.rock import Rock
 from app.models.task import Task
 from app.repositories.project_repository import ProjectRepository
@@ -212,15 +213,38 @@ def _serialize_member(membership) -> ProjectMemberOut:
     )
 
 
+async def _pm_user_ids(tenant: TenantContext, user_ids: list[int]) -> set[int]:
+    if not user_ids:
+        return set()
+    result = await tenant.db.execute(
+        select(OrganizationMembership.user_id).where(
+            OrganizationMembership.organization_id == tenant.organization_id,
+            OrganizationMembership.user_id.in_(user_ids),
+            OrganizationMembership.role == PROJECT_MANAGER,
+        )
+    )
+    return {row[0] for row in result.all()}
+
+
 @router.get("/{project_id}/members", response_model=list[ProjectMemberOut])
 async def list_project_members(
     project_id: int,
     tenant: TenantContext = Depends(require_org_manager),
 ):
+    """Project Manager assignments only. `ProjectMembership` is also used to
+    grant Clients access to a project (see `project_invitations.py`), but
+    this endpoint backs the staff-only "assign a Project Manager" UI, so
+    Clients who accepted an invitation must never show up here."""
     repo = ProjectRepository(tenant.db, tenant.organization_id)
     if await repo.get_by_id(project_id) is None:
         raise AppException(_NOT_FOUND)
-    return [_serialize_member(m) for m in await repo.list_members(project_id)]
+
+    members = await repo.list_members(project_id)
+    if not members:
+        return []
+
+    pm_user_ids = await _pm_user_ids(tenant, [m.user_id for m in members])
+    return [_serialize_member(m) for m in members if m.user_id in pm_user_ids]
 
 
 @router.post("/{project_id}/members", response_model=ProjectMemberOut, status_code=http_status.HTTP_201_CREATED)
@@ -229,9 +253,19 @@ async def add_project_member(
     payload: ProjectMemberAssign,
     tenant: TenantContext = Depends(require_org_manager),
 ):
+    """A project has exactly one Project Manager — assigning a new one
+    replaces whichever Project Manager was previously assigned (Client
+    memberships on this same project are left untouched)."""
     repo = ProjectRepository(tenant.db, tenant.organization_id)
     if await repo.get_by_id(project_id) is None:
         raise AppException(_NOT_FOUND)
+
+    existing_members = await repo.list_members(project_id)
+    other_user_ids = [m.user_id for m in existing_members if m.user_id != payload.user_id]
+    pm_user_ids = await _pm_user_ids(tenant, other_user_ids)
+    for uid in pm_user_ids:
+        await repo.remove_member(project_id, uid)
+
     membership = await repo.add_member(project_id, payload.user_id)
     return _serialize_member(membership)
 

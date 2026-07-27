@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.note import Note
@@ -22,6 +22,21 @@ class NoteRepository(TenantRepository):
         )
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
+
+    async def count_for_entities(self, entity_type: str, entity_ids: list[int]) -> dict[int, int]:
+        if not entity_ids:
+            return {}
+        stmt = (
+            select(Note.entity_id, func.count(Note.id))
+            .where(
+                Note.organization_id == self.org_id,
+                Note.entity_type == entity_type,
+                Note.entity_id.in_(entity_ids),
+            )
+            .group_by(Note.entity_id)
+        )
+        result = await self.db.execute(stmt)
+        return {entity_id: count for entity_id, count in result.all()}
 
     async def get_by_id(self, note_id: int) -> Note | None:
         stmt = self._base_stmt().where(Note.id == note_id)

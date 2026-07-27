@@ -99,6 +99,13 @@ class PdfRenderService:
             print_css=_PRINT_CSS_PATH.read_text(encoding="utf-8"),
         )
 
+    async def render_html_string(self, html: str) -> bytes:
+        """Renders an arbitrary, already-built HTML string to PDF bytes —
+        reused by report generators that don't build off a `Report` ORM
+        object (e.g. Employee/Team Performance reports). Goes through the
+        exact same Windows-safe worker-thread path as `render_pdf` below."""
+        return await asyncio.to_thread(_render_pdf_sync, html)
+
     async def render_pdf(self, report: Report) -> tuple[bytes, str]:
         """Returns (pdf_bytes, filename). Requires `playwright install chromium`
         to have been run once in this environment.

@@ -6,6 +6,7 @@ import { userApi } from "../api/userApi";
 import { projectApi } from "../api/projectApi";
 import { teamApi } from "../api/teamApi";
 import { useAuth } from "../context/AuthContext";
+import { useConfirm, usePrompt } from "../context/ConfirmContext";
 import CelebrationOverlay from "../components/CelebrationOverlay";
 import DatePicker from "../components/DatePicker";
 
@@ -392,6 +393,8 @@ function TaskTableRow({
 
 export default function TasksPage() {
   const { user } = useAuth();
+  const confirm = useConfirm();
+  const prompt = usePrompt();
 
   const canManageTasks = user?.role === "owner" || user?.role === "admin" || user?.role === "team_manager";
   const isTeamMember   = user?.role === "team_member";
@@ -684,7 +687,7 @@ export default function TasksPage() {
 
   async function handleDelete(task) {
     setOpenMenuId(null);
-    if (!window.confirm(`Delete "${task.name}"?`)) return;
+    if (!(await confirm({ message: `Delete "${task.name}"?`, tone: "danger", confirmLabel: "Delete" }))) return;
     try {
       await taskApi.delete(task.id);
       removeTaskFromLists(task.id);
@@ -726,7 +729,12 @@ export default function TasksPage() {
   }
 
   async function assignBackTask(task) {
-    const note = window.prompt("Reason for assigning back (optional):");
+    const note = await prompt({
+      title: "Assign Back",
+      message: "Reason for assigning back (optional):",
+      confirmLabel: "Assign Back",
+      multiline: true,
+    });
     if (note === null) return;
     setReviewActionId(task.id);
     setOpenMenuId(null);

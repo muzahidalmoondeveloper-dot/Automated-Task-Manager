@@ -16,4 +16,16 @@ export const scoreboardApi = {
   getTasks(userId, params = {}) {
     return apiClient.get(`/users/${userId}/scoreboard/tasks${buildQuery(params)}`);
   },
+
+  getOrganization(params = {}) {
+    return apiClient.get(`/scoreboard/employees${buildQuery(params)}`);
+  },
+
+  getTeamRankings(params = {}) {
+    return apiClient.get(`/scoreboard/teams${buildQuery(params)}`);
+  },
+
+  getManagerRankings(params = {}) {
+    return apiClient.get(`/scoreboard/managers${buildQuery(params)}`);
+  },
 };

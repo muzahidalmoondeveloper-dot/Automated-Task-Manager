@@ -13,6 +13,7 @@ TASK_PRIORITIES = {"low", "medium", "high"}
 
 class TaskCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
+    icon: str | None = None
     start_date: date | None = None
     due_date: date | None = None
     assignee_id: int | None = None
@@ -44,6 +45,7 @@ class TaskCreate(BaseModel):
 
 class TaskUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
+    icon: str | None = None
     start_date: date | None = None
     due_date: date | None = None
     assignee_id: int | None = None
@@ -87,6 +89,7 @@ class TaskStatusUpdate(BaseModel):
 class TaskRead(BaseModel):
     id: int
     name: str
+    icon: str | None = None
     start_date: date | None = None
     due_date: date | None = None
     status: str

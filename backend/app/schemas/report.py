@@ -86,6 +86,25 @@ class ReportCreate(BaseModel):
         return value
 
 
+class EmployeeReportCreate(BaseModel):
+    employee_id: int
+    period: str = "this_month"
+    project_id: Optional[int] = None
+    team_id: Optional[int] = None
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    include_task_details: bool = False
+
+
+class TeamReportCreate(BaseModel):
+    team_id: int
+    period: str = "this_month"
+    project_id: Optional[int] = None
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    include_task_details: bool = False
+
+
 class ReportContentUpdate(BaseModel):
     executive_summary: Optional[str] = None
     key_achievement: Optional[str] = None
@@ -227,6 +246,8 @@ class ReportClientActionUpsert(BaseModel):
 class ReportListItem(BaseModel):
     id: int
     project_id: Optional[int] = None
+    employee_id: Optional[int] = None
+    team_id: Optional[int] = None
     report_type: str
     title: str
     period_start: Optional[date] = None

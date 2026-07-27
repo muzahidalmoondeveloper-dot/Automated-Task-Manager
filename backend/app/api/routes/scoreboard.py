@@ -94,49 +94,18 @@ async def get_scoreboard(
     employee = await _resolve_employee(tenant, user_id)
 
     try:
-        period_start, period_end = scoring.resolve_period(period, start_date, end_date)
+        data = await scoring.build_employee_scoreboard(
+            tenant.db, tenant.organization_id, user_id, period, project_id, team_id, start_date, end_date,
+        )
     except ValueError as exc:
         raise AppException(_INVALID_PERIOD, message=str(exc))
 
-    current_tasks = await scoring.fetch_eligible_tasks(
-        tenant.db, tenant.organization_id, user_id, period_start, period_end, project_id, team_id,
-    )
-    current = scoring.compute_scoreboard(current_tasks)
-
-    prev_start, prev_end = scoring.previous_period(period, period_start, period_end)
-    prev_tasks = await scoring.fetch_eligible_tasks(
-        tenant.db, tenant.organization_id, user_id, prev_start, prev_end, project_id, team_id,
-    )
-    previous = scoring.compute_scoreboard(prev_tasks)
-
-    change_from_previous = None
-    if current.has_data and previous.has_data:
-        change_from_previous = current.rounded_score - previous.rounded_score
-
-    trend: list[ScoreHistoryPoint] = []
-    for window_start, window_end in scoring.trailing_periods(period, period_start, period_end, count=6):
-        window_tasks = await scoring.fetch_eligible_tasks(
-            tenant.db, tenant.organization_id, user_id, window_start, window_end, project_id, team_id,
-        )
-        window_result = scoring.compute_scoreboard(window_tasks)
-        label = window_start.strftime("%b %d") if period == "this_week" else window_start.strftime("%b %Y")
-        trend.append(ScoreHistoryPoint(
-            period_label=label,
-            period_start=window_start,
-            period_end=window_end,
-            rounded_score=window_result.rounded_score if window_result.has_data else None,
-            completed_tasks=window_result.total_completed if window_result.has_data else None,
-            overdue_tasks=window_result.overdue if window_result.has_data else None,
-            has_data=window_result.has_data,
-        ))
-
-    explanation = scoring.build_explanation(current, previous)
-
+    current = data.current
     return ScoreboardResponse(
         employee=employee,
-        period=period,
-        period_start=period_start,
-        period_end=period_end,
+        period=data.period,
+        period_start=data.period_start,
+        period_end=data.period_end,
         summary=ScoreboardSummary(
             total_assigned=current.total_assigned,
             total_completed=current.total_completed,
@@ -157,10 +126,10 @@ async def get_scoreboard(
             total_score=current.total_score,
             rounded_score=current.rounded_score,
             performance_level=current.performance_level,
-            change_from_previous=change_from_previous,
+            change_from_previous=data.change_from_previous,
         ),
-        explanation=explanation,
-        trend=trend,
+        explanation=data.explanation,
+        trend=[ScoreHistoryPoint(**point) for point in data.trend],
     )
 
 
@@ -181,23 +150,7 @@ async def get_scoreboard_tasks(
     except ValueError as exc:
         raise AppException(_INVALID_PERIOD, message=str(exc))
 
-    tasks = await scoring.fetch_eligible_tasks(
+    items = await scoring.build_employee_task_items(
         tenant.db, tenant.organization_id, user_id, period_start, period_end, project_id, team_id,
     )
-    tasks = sorted(tasks, key=lambda t: t.due_date or date.max)[:200]
-
-    today = date.today()
-    return [
-        ScoreboardTaskItem(
-            id=t.id,
-            name=t.name,
-            project_id=t.project_id,
-            project_name=t.project.name if t.project else None,
-            priority=t.priority,
-            due_date=t.due_date,
-            completed_at=t.completed_at,
-            status=t.status,
-            score_impact=scoring.score_impact_label(t, today),
-        )
-        for t in tasks
-    ]
+    return [ScoreboardTaskItem(**item) for item in items]

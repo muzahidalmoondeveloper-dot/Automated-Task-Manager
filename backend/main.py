@@ -26,6 +26,7 @@ from app.api.routes import project_invitations
 from app.api.routes import task_requests
 from app.api.routes import scoreboard
 from app.api.routes import team_scoreboard
+from app.api.routes import organization_scoreboard
 import app.models.issue  # noqa: F401  — register Issue
 import app.models.meeting  # noqa: F401  — register Meeting models
 import app.models.chat  # noqa: F401  — register models for auto table creation
@@ -128,6 +129,30 @@ async def lifespan(app: FastAPI):
         await conn.execute(text(
             "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE"
         ))
+        await conn.execute(text(
+            "ALTER TABLE reports ADD COLUMN IF NOT EXISTS employee_id INTEGER REFERENCES users(id) ON DELETE SET NULL"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE reports ADD COLUMN IF NOT EXISTS team_id INTEGER REFERENCES teams(id) ON DELETE SET NULL"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE reports ADD COLUMN IF NOT EXISTS performance_snapshot JSONB"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE org_values ALTER COLUMN icon TYPE VARCHAR(200)"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE issues ADD COLUMN IF NOT EXISTS icon VARCHAR(200)"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE team_news ADD COLUMN IF NOT EXISTS icon VARCHAR(200)"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE objectives ADD COLUMN IF NOT EXISTS icon VARCHAR(200)"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS icon VARCHAR(200)"
+        ))
 
     await seed_admin()
 
@@ -187,6 +212,7 @@ app.include_router(project_invitations.router, prefix=settings.API_PREFIX)
 app.include_router(task_requests.router, prefix=settings.API_PREFIX)
 app.include_router(scoreboard.router, prefix=settings.API_PREFIX)
 app.include_router(team_scoreboard.router, prefix=settings.API_PREFIX)
+app.include_router(organization_scoreboard.router, prefix=settings.API_PREFIX)
 
 @app.get("/health")
 async def health_check():

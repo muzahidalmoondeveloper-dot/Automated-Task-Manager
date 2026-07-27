@@ -13,7 +13,7 @@ STATUS_COLORS = {
     "on_hold": "#A855F7",
 }
 
-REPORT_TYPES = {"weekly", "monthly", "client"}
+REPORT_TYPES = {"weekly", "monthly", "client", "employee_performance", "team_performance"}
 REPORT_STATUSES = {"draft", "finalized", "archived"}
 
 THEME_PRESETS = [

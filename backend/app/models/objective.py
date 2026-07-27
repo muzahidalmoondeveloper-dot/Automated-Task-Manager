@@ -13,6 +13,7 @@ class Objective(Base):
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=True)
+    icon: Mapped[str | None] = mapped_column(String(200), nullable=True)
     status: Mapped[str] = mapped_column(String(50), default="active", server_default="active", nullable=False)
     progress: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     due_date: Mapped[date] = mapped_column(Date, nullable=True)

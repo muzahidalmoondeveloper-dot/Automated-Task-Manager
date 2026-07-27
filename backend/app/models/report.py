@@ -3,6 +3,7 @@ from datetime import date, datetime
 from typing import Optional
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     Date,
     DateTime,
@@ -45,10 +46,17 @@ class Report(Base):
     pdf_file_path: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
     team_visible: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
 
+    # Employee/Team Performance reports — nullable, unused by project reports.
+    employee_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    team_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("teams.id", ondelete="SET NULL"), nullable=True)
+    performance_snapshot: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     project = relationship("Project", foreign_keys=[project_id], lazy="selectin")
+    employee = relationship("User", foreign_keys=[employee_id], lazy="selectin")
+    team = relationship("Team", foreign_keys=[team_id], lazy="selectin")
     created_by = relationship("User", foreign_keys=[created_by_id], lazy="selectin")
     finalized_by = relationship("User", foreign_keys=[finalized_by_id], lazy="selectin")
     theme = relationship("ReportTheme", foreign_keys=[theme_id], lazy="selectin")

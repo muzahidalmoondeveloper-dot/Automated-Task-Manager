@@ -369,6 +369,9 @@ async def update_kpi(
     for field, value in updates.items():
         setattr(kpi, field, value)
     if payload.links is not None:
+        for l in list(kpi.links):
+            await db.delete(l)
+        await db.flush()
         _apply_links(kpi, payload.links)
     await db.commit()
     await db.refresh(kpi)

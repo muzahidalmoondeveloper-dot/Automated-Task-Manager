@@ -48,6 +48,14 @@ function TasksIcon() {
   );
 }
 
+function ScoreboardIcon() {
+  return (
+    <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+      <path d="M3 13a1 1 0 011-1h1a1 1 0 011 1v4a1 1 0 01-1 1H4a1 1 0 01-1-1v-4zM8 9a1 1 0 011-1h1a1 1 0 011 1v8a1 1 0 01-1 1H9a1 1 0 01-1-1V9zM14 5a1 1 0 011-1h1a1 1 0 011 1v12a1 1 0 01-1 1h-1a1 1 0 01-1-1V5z" />
+    </svg>
+  );
+}
+
 function UsersIcon() {
   return (
     <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
@@ -847,6 +855,16 @@ function SidebarContent({
             collapsed={collapsed}
             onClick={handleClickNav}
           />
+
+          {canManageUsers ? (
+            <NavItem
+              to="/scoreboard"
+              icon={<ScoreboardIcon />}
+              label="Scoreboard"
+              collapsed={collapsed}
+              onClick={handleClickNav}
+            />
+          ) : null}
 
           {canManageUsers ? (
             <NavItem

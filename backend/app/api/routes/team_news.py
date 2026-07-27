@@ -89,6 +89,9 @@ async def update_news(
         setattr(news, key, value)
 
     if payload.links is not None:
+        for l in list(news.links):
+            await db.delete(l)
+        await db.flush()
         _apply_links(news, payload.links)
 
     await db.commit()

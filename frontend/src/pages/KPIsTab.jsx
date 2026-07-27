@@ -4,6 +4,8 @@ import DOMPurify from "dompurify";
 import RichEditor from "../components/RichEditor";
 import LinkedItemsHoverIcon from "../components/LinkedItemsHoverIcon";
 import EntityDetailPanel from "../components/EntityDetailPanel";
+import IconPickerButton from "../components/IconPicker.jsx";
+import { RockIconDisplay } from "../utils/rockIcons.jsx";
 import toast from "react-hot-toast";
 import { kpiApi } from "../api/kpiApi";
 import { rockApi } from "../api/rockApi";
@@ -14,6 +16,7 @@ import { teamApi } from "../api/teamApi";
 import { projectApi } from "../api/projectApi";
 import { apiClient } from "../api/client";
 import { useAuth } from "../context/AuthContext";
+import { useConfirm } from "../context/ConfirmContext";
 
 // ─── Avatar helpers ────────────────────────────────────────────────────────────
 
@@ -287,6 +290,7 @@ const VIEW_OPTIONS = ["weekly", "monthly", "quarterly", "yearly"];
 
 function KPIModal({ team, users, rocks, teams, projects, groups, currentUser, editing, onClose, onSave, saving, onGroupCreated }) {
   const [title, setTitle] = useState(editing?.title || "");
+  const [icon, setIcon] = useState(editing?.icon || null);
   const [desc, setDesc] = useState(editing?.description || "");
   const [ownerId, setOwnerId] = useState(
     editing ? String(editing.owner?.id || "") : String(currentUser?.id || "")
@@ -453,6 +457,7 @@ function KPIModal({ team, users, rocks, teams, projects, groups, currentUser, ed
     }
     onSave({
       title: title.trim(),
+      icon,
       description: desc || null,
       owner_id: ownerId ? Number(ownerId) : null,
       rock_id: Number(rockId),
@@ -493,13 +498,9 @@ function KPIModal({ team, users, rocks, teams, projects, groups, currentUser, ed
           <div className="grid grid-cols-[1fr_260px] divide-x divide-slate-100">
             {/* Left */}
             <div className="flex flex-col gap-5 p-6">
-              {/* KPI name with trend icon */}
+              {/* KPI name with icon picker */}
               <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-500">
-                  <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                    <path fillRule="evenodd" d="M12.577 4.878a.75.75 0 01.919-.53l4.78 1.281a.75.75 0 01.531.919l-1.281 4.78a.75.75 0 01-1.449-.387l.81-3.022a19.407 19.407 0 00-5.594 5.203.75.75 0 01-1.139.093L7 10.06l-4.72 4.72a.75.75 0 01-1.06-1.061l5.25-5.25a.75.75 0 011.06 0l3.074 3.073a20.923 20.923 0 015.545-4.931l-3.042-.815a.75.75 0 01-.53-.918z" clipRule="evenodd" />
-                  </svg>
-                </div>
+                <IconPickerButton value={icon} onChange={setIcon} resetKey={editing?.id ?? "create"} size={20} />
                 <input value={title} onChange={(e) => setTitle(e.target.value)}
                   placeholder="Name this KPI" required autoFocus
                   className="flex-1 rounded-xl border border-slate-200 px-4 py-2.5 text-base font-medium text-slate-900 placeholder:text-slate-300 outline-none focus:border-slate-400" />
@@ -968,6 +969,7 @@ function TrendModal({ kpi, view, onClose }) {
 // ─── Record value modal ───────────────────────────────────────────────────────
 
 function RecordValueModal({ kpi, period, entry, teamId, onClose, onSaved }) {
+  const confirm = useConfirm();
   const [value, setValue] = useState(entry?.value != null ? String(entry.value) : "");
   const [forecast, setForecast] = useState(entry?.forecast != null ? String(entry.forecast) : "");
   const [noteText, setNoteText] = useState("");
@@ -1051,7 +1053,7 @@ function RecordValueModal({ kpi, period, entry, teamId, onClose, onSaved }) {
   }
 
   async function handleDeleteNote(idx) {
-    if (!confirm("Delete this note?")) return;
+    if (!(await confirm({ message: "Delete this note?", tone: "danger", confirmLabel: "Delete" }))) return;
     const liveEntry = entryRef.current;
     if (!liveEntry) return;
     try {
@@ -1459,6 +1461,11 @@ function KPIRow({ kpi, index, isDragOver, teamId, view, periods, canManage, onEd
               </>
             )}
           </button>
+          {kpi.icon && (
+            <span className="shrink-0 text-slate-400">
+              <RockIconDisplay iconStr={kpi.icon} size={14} />
+            </span>
+          )}
           <span className="text-sm font-medium text-slate-800">{kpi.title}</span>
           {isNew && <span className="rounded bg-slate-900 px-1.5 py-0.5 text-[10px] font-bold text-white">NEW</span>}
           {kpi.rock && (
@@ -1564,6 +1571,7 @@ const VIEW_TABS = [
 
 export default function KPIsTab({ team, canManage }) {
   const { user } = useAuth();
+  const confirm = useConfirm();
   const [kpis, setKpis] = useState([]);
   const [rocks, setRocks] = useState([]);
   const [teams, setTeams] = useState([]);
@@ -1648,7 +1656,7 @@ export default function KPIsTab({ team, canManage }) {
 
   async function handleDeleteGroup(group) {
     setGroupMenuId(null);
-    if (!confirm(`Delete group "${group.name}"? Its KPIs will be kept and become ungrouped.`)) return;
+    if (!(await confirm({ message: `Delete group "${group.name}"? Its KPIs will be kept and become ungrouped.`, tone: "danger", confirmLabel: "Delete" }))) return;
     try {
       await kpiApi.deleteGroup(team.id, group.id);
       setGroups((prev) => prev.filter((g) => g.id !== group.id));
@@ -1735,7 +1743,7 @@ export default function KPIsTab({ team, canManage }) {
   }
 
   async function handleDelete(kpi) {
-    if (!confirm(`Delete "${kpi.title}"?`)) return;
+    if (!(await confirm({ message: `Delete "${kpi.title}"?`, tone: "danger", confirmLabel: "Delete" }))) return;
     try {
       await kpiApi.delete(team.id, kpi.id);
       setKpis((prev) => prev.filter((k) => k.id !== kpi.id));

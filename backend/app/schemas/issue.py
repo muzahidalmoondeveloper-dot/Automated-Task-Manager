@@ -45,6 +45,7 @@ class ProjectRef(BaseModel):
 class IssueCreate(BaseModel):
     title: str
     description: Optional[str] = None
+    icon: Optional[str] = None
     assignee_id: Optional[int] = None
     project_id: Optional[int] = None
     timeframe: Optional[str] = "short-term"
@@ -65,6 +66,7 @@ class IssueCreate(BaseModel):
 class IssueUpdate(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
+    icon: Optional[str] = None
     assignee_id: Optional[int] = None
     project_id: Optional[int] = None
     timeframe: Optional[str] = None
@@ -88,6 +90,7 @@ class IssueOut(BaseModel):
     id: int
     title: str
     description: Optional[str] = None
+    icon: Optional[str] = None
     team_id: int
     assignee_id: Optional[int] = None
     project_id: Optional[int] = None

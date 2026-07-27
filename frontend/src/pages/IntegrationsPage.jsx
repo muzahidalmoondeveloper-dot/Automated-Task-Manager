@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
 
 import { integrationApi } from "../api/integrationApi";
+import { useConfirm } from "../context/ConfirmContext";
 
 function ProviderCard({
   title,
@@ -92,6 +93,7 @@ function ProviderCard({
 }
 
 export default function IntegrationsPage() {
+  const confirm = useConfirm();
   const [accounts, setAccounts] = useState([]);
   const [error, setError] = useState("");
   const [isSyncingMicrosoft, setIsSyncingMicrosoft] = useState(false);
@@ -163,9 +165,11 @@ export default function IntegrationsPage() {
   }
 
   async function handleDisconnectAccount(account) {
-    const confirmed = window.confirm(
-      `Disconnect ${account.account_email} from ${account.provider}?`
-    );
+    const confirmed = await confirm({
+      message: `Disconnect ${account.account_email} from ${account.provider}?`,
+      tone: "danger",
+      confirmLabel: "Disconnect",
+    });
 
     if (!confirmed) return;
 

@@ -5,6 +5,9 @@ import DOMPurify from "dompurify";
 import LinkedItemsHoverIcon from "../components/LinkedItemsHoverIcon";
 import EntityDetailPanel from "../components/EntityDetailPanel";
 import DatePicker from "../components/DatePicker";
+import CelebrationOverlay from "../components/CelebrationOverlay";
+import IconPickerButton from "../components/IconPicker.jsx";
+import { RockIconDisplay } from "../utils/rockIcons.jsx";
 
 import { teamApi } from "../api/teamApi";
 import { taskApi } from "../api/taskApi";
@@ -14,6 +17,7 @@ import { organizationApi } from "../api/organizationApi";
 import { rockApi } from "../api/rockApi";
 import { kpiApi } from "../api/kpiApi";
 import { useAuth } from "../context/AuthContext";
+import { useConfirm } from "../context/ConfirmContext";
 import RocksTab from "./RocksTab";
 import KPIsTab from "./KPIsTab";
 import IssuesTab from "./IssuesTab";
@@ -99,6 +103,7 @@ function linkKey(link) {
 
 function NewsModal({ team, teams, users, currentUser, editing, onClose, onSave, saving }) {
   const [title, setTitle] = useState(editing?.title || "");
+  const [icon, setIcon] = useState(editing?.icon || null);
   const [body, setBody] = useState(editing?.body || "");
   const [status, setStatus] = useState(editing?.status || "active");
   const [ownerId, setOwnerId] = useState(
@@ -167,6 +172,7 @@ function NewsModal({ team, teams, users, currentUser, editing, onClose, onSave, 
     if (!title.trim()) return;
     onSave({
       title: title.trim(),
+      icon,
       body: body || "",
       status,
       owner_id: ownerId ? Number(ownerId) : null,
@@ -209,10 +215,7 @@ function NewsModal({ team, teams, users, currentUser, editing, onClose, onSave, 
             {/* Left: title + rich text body */}
             <div className="flex flex-col gap-4 p-5">
               <div className="flex items-center gap-3 border-b border-slate-100 pb-4">
-                <svg className="h-6 w-6 shrink-0 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
-                  <path fillRule="evenodd" d="M2 5a2 2 0 012-2h8a2 2 0 012 2v10a2 2 0 002 2H4a2 2 0 01-2-2V5zm3 1h6v4H5V6zm6 6H5v2h6v-2z" clipRule="evenodd" />
-                  <path d="M15 7h1a2 2 0 012 2v5.5a1.5 1.5 0 01-3 0V7z" />
-                </svg>
+                <IconPickerButton value={icon} onChange={setIcon} resetKey={editing?.id ?? "create"} size={20} />
                 <input
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
@@ -489,6 +492,7 @@ function NewsViewModal({ item, canManage, onClose, onEdit }) {
 
 function NewsTab({ team, canManage }) {
   const { user } = useAuth();
+  const confirm = useConfirm();
   const [news, setNews] = useState([]);
   const [users, setUsers] = useState([]);
   const [teams, setTeams] = useState([]);
@@ -559,7 +563,7 @@ function NewsTab({ team, canManage }) {
   }
 
   async function handleDelete(item) {
-    if (!confirm(`Delete "${item.title}"?`)) return;
+    if (!(await confirm({ message: `Delete "${item.title}"?`, tone: "danger", confirmLabel: "Delete" }))) return;
     try {
       await teamNewsApi.delete(team.id, item.id);
       setNews((prev) => prev.filter((n) => n.id !== item.id));
@@ -644,10 +648,14 @@ function NewsTab({ team, canManage }) {
                 onClick={() => setViewItem(item)}>
                 {/* Icon */}
                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-400">
-                  <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                    <path fillRule="evenodd" d="M2 5a2 2 0 012-2h8a2 2 0 012 2v10a2 2 0 002 2H4a2 2 0 01-2-2V5zm3 1h6v4H5V6zm6 6H5v2h6v-2z" clipRule="evenodd" />
-                    <path d="M15 7h1a2 2 0 012 2v5.5a1.5 1.5 0 01-3 0V7z" />
-                  </svg>
+                  {item.icon ? (
+                    <RockIconDisplay iconStr={item.icon} size={16} />
+                  ) : (
+                    <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M2 5a2 2 0 012-2h8a2 2 0 012 2v10a2 2 0 002 2H4a2 2 0 01-2-2V5zm3 1h6v4H5V6zm6 6H5v2h6v-2z" clipRule="evenodd" />
+                      <path d="M15 7h1a2 2 0 012 2v5.5a1.5 1.5 0 01-3 0V7z" />
+                    </svg>
+                  )}
                 </div>
                 {/* Title + plain-text preview */}
                 <div className="min-w-0 flex-1">
@@ -820,6 +828,7 @@ const TEAM_PAGE_TABS = [
 
 function CreateTodoModal({ team, users, editing, onClose, onSave, saving }) {
   const [name, setName] = useState(editing?.name || "");
+  const [icon, setIcon] = useState(editing?.icon || null);
   const [assigneeId, setAssigneeId] = useState(
     editing?.assignee_id ? String(editing.assignee_id) : editing?.assignee?.id ? String(editing.assignee.id) : ""
   );
@@ -833,6 +842,7 @@ function CreateTodoModal({ team, users, editing, onClose, onSave, saving }) {
     if (!name.trim()) return;
     onSave({
       name: name.trim(),
+      icon,
       assignee_id: assigneeId ? Number(assigneeId) : null,
       start_date: startDate || null,
       due_date: dueDate || null,
@@ -862,14 +872,17 @@ function CreateTodoModal({ team, users, editing, onClose, onSave, saving }) {
             {/* Task Name */}
             <div>
               <label className="mb-1.5 block text-xs font-semibold text-slate-500">Task Name *</label>
-              <input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Enter task name"
-                required
-                autoFocus
-                className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-slate-400 focus:outline-none"
-              />
+              <div className="flex items-center gap-2">
+                <IconPickerButton value={icon} onChange={setIcon} resetKey={editing?.id ?? "create"} size={20} />
+                <input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="Enter task name"
+                  required
+                  autoFocus
+                  className="flex-1 rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-slate-400 focus:outline-none"
+                />
+              </div>
             </div>
 
             {/* Assignee */}
@@ -973,6 +986,7 @@ function PlaceholderTab({ title, description, emoji }) {
 export default function TeamDetailPage() {
   const { teamId } = useParams();
   const { user } = useAuth();
+  const confirm = useConfirm();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const activeTab = searchParams.get("tab") || "news";
@@ -986,6 +1000,7 @@ export default function TeamDetailPage() {
   const [todoSaving, setTodoSaving] = useState(false);
   const [todoUsers, setTodoUsers] = useState([]);
   const [editingTodo, setEditingTodo] = useState(null);
+  const [celebrationData, setCelebrationData] = useState(null);
 
   const canManageTasks = user?.role === "owner" || user?.role === "admin" || user?.role === "team_manager";
 
@@ -1088,7 +1103,7 @@ export default function TeamDetailPage() {
   }
 
   async function handleDeleteTodo(task) {
-    if (!confirm(`Delete "${task.name}"? This cannot be undone.`)) return;
+    if (!(await confirm({ message: `Delete "${task.name}"? This cannot be undone.`, tone: "danger", confirmLabel: "Delete" }))) return;
     try {
       await taskApi.delete(task.id);
       setTasks((prev) => prev.filter((t) => t.id !== task.id));
@@ -1108,7 +1123,12 @@ export default function TeamDetailPage() {
         current.map((item) => (item.id === task.id ? updatedTask : item))
       );
 
-      toast.success("Task status updated.");
+      if (updatedTask.status === "done") {
+        const isSelf = task.assignee_id === user?.id;
+        setCelebrationData({ taskName: updatedTask.name, completedByName: isSelf ? null : (task.assignee?.full_name || null) });
+      } else {
+        toast.success("Task status updated.");
+      }
     } catch (err) {
       toast.error(err.message || "Unable to update task status.");
     }
@@ -1289,14 +1309,21 @@ export default function TeamDetailPage() {
                       </td>
 
                       <td className="px-4 py-4 align-middle">
-                        <span
-                          className={
-                            task.status === "done"
-                              ? "font-medium text-slate-500 line-through"
-                              : "font-medium text-slate-900"
-                          }
-                        >
-                          {task.name}
+                        <span className="inline-flex items-center gap-1.5">
+                          {task.icon && (
+                            <span className="shrink-0 text-slate-400">
+                              <RockIconDisplay iconStr={task.icon} size={14} />
+                            </span>
+                          )}
+                          <span
+                            className={
+                              task.status === "done"
+                                ? "font-medium text-slate-500 line-through"
+                                : "font-medium text-slate-900"
+                            }
+                          >
+                            {task.name}
+                          </span>
                         </span>
                       </td>
 
@@ -1414,6 +1441,14 @@ export default function TeamDetailPage() {
 
       {activeTab === "scoreboard" && (
         <TeamScoreboardTab team={team} />
+      )}
+
+      {celebrationData && (
+        <CelebrationOverlay
+          taskName={celebrationData.taskName}
+          completedByName={celebrationData.completedByName}
+          onDismiss={() => setCelebrationData(null)}
+        />
       )}
     </div>
   );

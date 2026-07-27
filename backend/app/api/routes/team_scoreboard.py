@@ -114,102 +114,42 @@ async def get_team_scoreboard(
     await _require_can_view_team_scoreboard(tenant, team)
 
     try:
-        period_start, period_end = scoring.resolve_period(period, start_date, end_date)
+        data = await scoring.build_team_scoreboard(
+            tenant.db, tenant.organization_id, team, period, project_id, start_date, end_date,
+        )
     except ValueError as exc:
         raise AppException(_INVALID_PERIOD, message=str(exc))
 
-    current_tasks = await scoring.fetch_eligible_team_tasks(
-        tenant.db, tenant.organization_id, team_id, period_start, period_end, project_id,
-    )
-    current = scoring.compute_scoreboard(current_tasks)
-
-    prev_start, prev_end = scoring.previous_period(period, period_start, period_end)
-    prev_tasks = await scoring.fetch_eligible_team_tasks(
-        tenant.db, tenant.organization_id, team_id, prev_start, prev_end, project_id,
-    )
-    previous = scoring.compute_scoreboard(prev_tasks)
-
-    change_from_previous = None
-    if current.has_data and previous.has_data:
-        change_from_previous = current.rounded_score - previous.rounded_score
-
-    async def _build_trend(anchor_start: date, anchor_end: date) -> list[ScoreHistoryPoint]:
-        points: list[ScoreHistoryPoint] = []
-        for window_start, window_end in scoring.trailing_periods(period, anchor_start, anchor_end, count=6):
-            window_tasks = await scoring.fetch_eligible_team_tasks(
-                tenant.db, tenant.organization_id, team_id, window_start, window_end, project_id,
-            )
-            window_result = scoring.compute_scoreboard(window_tasks)
-            label = window_start.strftime("%b %d") if period == "this_week" else window_start.strftime("%b %Y")
-            points.append(ScoreHistoryPoint(
-                period_label=label,
-                period_start=window_start,
-                period_end=window_end,
-                rounded_score=window_result.rounded_score if window_result.has_data else None,
-                completed_tasks=window_result.total_completed if window_result.has_data else None,
-                overdue_tasks=window_result.overdue if window_result.has_data else None,
-                has_data=window_result.has_data,
-            ))
-        return points
-
-    trend = await _build_trend(period_start, period_end)
-    # A comparable earlier series — the 6 periods immediately preceding the
-    # current trend window — plotted as a dashed reference line so managers
-    # can see this cycle against the one before it.
-    earliest_window_start, earliest_window_end = scoring.trailing_periods(period, period_start, period_end, count=6)[0]
-    prev_anchor_start, prev_anchor_end = scoring.previous_period(period, earliest_window_start, earliest_window_end)
-    previous_trend = await _build_trend(prev_anchor_start, prev_anchor_end)
-
-    member_rows: list[TeamScoreboardMemberRow] = []
-    member_results: list[tuple[str, ScoreboardResult]] = []
-    for membership in team.memberships:
-        member_tasks = await scoring.fetch_eligible_tasks(
-            tenant.db, tenant.organization_id, membership.user_id, period_start, period_end, project_id, team_id,
+    current = data.current
+    member_rows = [
+        TeamScoreboardMemberRow(
+            rank=m.rank,
+            user_id=m.user_id,
+            full_name=m.full_name,
+            role=m.role,
+            has_data=m.result.has_data,
+            rounded_score=m.result.rounded_score if m.result.has_data else None,
+            performance_level=m.result.performance_level if m.result.has_data else None,
+            total_assigned=m.result.total_assigned,
+            total_completed=m.result.total_completed,
+            overdue=m.result.overdue,
+            completion_rate=m.result.completion_rate,
+            on_time_rate=m.result.on_time_rate,
         )
-        member_result = scoring.compute_scoreboard(member_tasks)
-        member_results.append((membership.user.full_name, member_result))
-        member_rows.append(TeamScoreboardMemberRow(
-            rank=0,
-            user_id=membership.user_id,
-            full_name=membership.user.full_name,
-            role=membership.user.role,
-            has_data=member_result.has_data,
-            rounded_score=member_result.rounded_score if member_result.has_data else None,
-            performance_level=member_result.performance_level if member_result.has_data else None,
-            total_assigned=member_result.total_assigned,
-            total_completed=member_result.total_completed,
-            overdue=member_result.overdue,
-            completion_rate=member_result.completion_rate,
-            on_time_rate=member_result.on_time_rate,
-        ))
-
-    # Tie-breakers (spec §7): score desc -> on-time rate desc -> overdue asc -> completed desc.
-    # Members with no data sort to the bottom.
-    member_rows.sort(
-        key=lambda m: (
-            m.has_data is False,
-            -(m.rounded_score or 0),
-            -(m.on_time_rate or 0),
-            m.overdue,
-            -m.total_completed,
-        )
-    )
-    for i, row in enumerate(member_rows, start=1):
-        row.rank = i
-
-    insights = scoring.build_team_insights(current, previous, member_results)
+        for m in data.members
+    ]
 
     return TeamScoreboardResponse(
         team=_team_info(team),
-        period=period,
-        period_start=period_start,
-        period_end=period_end,
+        period=data.period,
+        period_start=data.period_start,
+        period_end=data.period_end,
         summary=_to_summary(current),
-        score=_to_score(current, change_from_previous),
+        score=_to_score(current, data.change_from_previous),
         members=member_rows,
-        trend=trend,
-        previous_trend=previous_trend,
-        insights=insights,
+        trend=[ScoreHistoryPoint(**point) for point in data.trend],
+        previous_trend=[ScoreHistoryPoint(**point) for point in data.previous_trend],
+        insights=data.insights,
     )
 
 
@@ -230,23 +170,7 @@ async def get_team_scoreboard_tasks(
     except ValueError as exc:
         raise AppException(_INVALID_PERIOD, message=str(exc))
 
-    tasks = await scoring.fetch_eligible_team_tasks(
+    items = await scoring.build_team_task_items(
         tenant.db, tenant.organization_id, team_id, period_start, period_end, project_id,
     )
-    tasks = sorted(tasks, key=lambda t: t.due_date or date.max)[:200]
-
-    today = date.today()
-    return [
-        ScoreboardTaskItem(
-            id=t.id,
-            name=t.name,
-            project_id=t.project_id,
-            project_name=t.project.name if t.project else None,
-            priority=t.priority,
-            due_date=t.due_date,
-            completed_at=t.completed_at,
-            status=t.status,
-            score_impact=scoring.score_impact_label(t, today),
-        )
-        for t in tasks
-    ]
+    return [ScoreboardTaskItem(**item) for item in items]

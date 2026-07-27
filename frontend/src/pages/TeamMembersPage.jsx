@@ -3,8 +3,10 @@ import toast from "react-hot-toast";
 import { teamMemberApi } from "../api/teamMemberApi";
 import TeamMemberForm from "../components/team/TeamMemberForm";
 import TeamMemberList from "../components/team/TeamMemberList";
+import { useConfirm } from "../context/ConfirmContext";
 
 export default function TeamMembersPage() {
+  const confirm = useConfirm();
   const [teamMembers, setTeamMembers] = useState([]);
   const [editingMember, setEditingMember] = useState(null);
 
@@ -77,9 +79,11 @@ export default function TeamMembersPage() {
   }
 
   async function handleDelete(member) {
-    const confirmed = window.confirm(
-      `Delete ${member.full_name}? This cannot be undone.`
-    );
+    const confirmed = await confirm({
+      message: `Delete ${member.full_name}? This cannot be undone.`,
+      tone: "danger",
+      confirmLabel: "Delete",
+    });
 
     if (!confirmed) return;
 

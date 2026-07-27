@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import toast from "react-hot-toast";
 import { meetingApi } from "../api/meetingApi";
 import { useAuth } from "../context/AuthContext";
+import { useConfirm } from "../context/ConfirmContext";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -860,6 +861,7 @@ const FILTER_TABS = [
 
 export default function MeetingsTab({ team, canManage }) {
   const { user } = useAuth();
+  const confirm = useConfirm();
   const [meetings, setMeetings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("");
@@ -903,7 +905,7 @@ export default function MeetingsTab({ team, canManage }) {
   }
 
   async function handleDelete(id) {
-    if (!confirm("Delete this meeting?")) return;
+    if (!(await confirm({ message: "Delete this meeting?", tone: "danger", confirmLabel: "Delete" }))) return;
     try {
       await meetingApi.delete(team.id, id);
       setMeetings((prev) => prev.filter((m) => m.id !== id));

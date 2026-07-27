@@ -13,7 +13,7 @@ class OrgValue(Base):
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=True)
-    icon: Mapped[str] = mapped_column(String(10), default="⭐", server_default="⭐", nullable=False)
+    icon: Mapped[str] = mapped_column(String(200), default="⭐", server_default="⭐", nullable=False)
     color: Mapped[str] = mapped_column(String(50), default="slate", server_default="slate", nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     organization_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True, index=True)

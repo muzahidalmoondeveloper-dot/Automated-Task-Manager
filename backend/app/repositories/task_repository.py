@@ -119,6 +119,7 @@ class TaskRepository(TenantRepository):
     async def create(self, payload: TaskCreate, created_by_id: int) -> Task:
         task = Task(
             name=payload.name.strip(),
+            icon=payload.icon,
             start_date=payload.start_date,
             due_date=payload.due_date,
             status=payload.status,

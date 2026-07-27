@@ -35,6 +35,7 @@ class NewsLinkOut(BaseModel):
 class NewsCreate(BaseModel):
     title: str
     body: str | None = None
+    icon: str | None = None
     status: str = "active"
     owner_id: int | None = None
     links: list[NewsLinkIn] = []
@@ -43,6 +44,7 @@ class NewsCreate(BaseModel):
 class NewsUpdate(BaseModel):
     title: str | None = None
     body: str | None = None
+    icon: str | None = None
     status: str | None = None
     owner_id: int | None = None
     team_id: int | None = None
@@ -54,6 +56,7 @@ class NewsOut(BaseModel):
     id: int
     title: str
     body: str | None = None
+    icon: str | None = None
     status: str
     team_id: int
     owner_id: int | None = None

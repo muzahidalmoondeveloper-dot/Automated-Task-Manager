@@ -4,9 +4,11 @@ import toast from "react-hot-toast";
 
 import { scoreboardApi } from "../api/scoreboardApi";
 import { projectApi } from "../api/projectApi";
+import { reportApi } from "../api/reportApi";
 import DatePicker from "../components/DatePicker";
 import RingChart from "../components/scoreboard/RingChart";
 import ScoreTrendCard from "../components/scoreboard/ScoreTrendCard";
+import ReportModal from "../components/scoreboard/ReportModal";
 import {
   PERIOD_OPTIONS,
   PERFORMANCE_BADGE,
@@ -32,6 +34,7 @@ export default function UserScoreboardPage() {
   const [tasks, setTasks] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
+  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
 
   useEffect(() => {
     projectApi.list()
@@ -190,6 +193,14 @@ export default function UserScoreboardPage() {
             <option key={p.id} value={p.id}>{p.name}</option>
           ))}
         </select>
+
+        <button
+          type="button"
+          onClick={() => setIsReportModalOpen(true)}
+          className="ml-auto rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+        >
+          Download Report
+        </button>
       </div>
 
       {/* ── Summary cards ── */}
@@ -299,6 +310,16 @@ export default function UserScoreboardPage() {
           </table>
         </div>
       </div>
+
+      <ReportModal
+        isOpen={isReportModalOpen}
+        onClose={() => setIsReportModalOpen(false)}
+        title="Download Employee Report"
+        subtitle={`Generate a performance PDF for ${employee.full_name}.`}
+        showProjectFilter
+        projects={projects}
+        onGenerate={(formValues) => reportApi.createEmployeeReport({ employee_id: Number(userId), ...formValues })}
+      />
     </div>
   );
 }

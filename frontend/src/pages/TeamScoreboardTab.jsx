@@ -4,9 +4,11 @@ import toast from "react-hot-toast";
 
 import { teamApi } from "../api/teamApi";
 import { projectApi } from "../api/projectApi";
+import { reportApi } from "../api/reportApi";
 import DatePicker from "../components/DatePicker";
 import RingChart from "../components/scoreboard/RingChart";
 import ScoreTrendCard from "../components/scoreboard/ScoreTrendCard";
+import ReportModal from "../components/scoreboard/ReportModal";
 import {
   PERIOD_OPTIONS,
   PERFORMANCE_BADGE,
@@ -28,6 +30,7 @@ export default function TeamScoreboardTab({ team }) {
   const [data, setData] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
+  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
 
   useEffect(() => {
     projectApi.list()
@@ -171,6 +174,14 @@ export default function TeamScoreboardTab({ team }) {
             <option key={p.id} value={p.id}>{p.name}</option>
           ))}
         </select>
+
+        <button
+          type="button"
+          onClick={() => setIsReportModalOpen(true)}
+          className="ml-auto rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+        >
+          Download Report
+        </button>
       </div>
 
       {/* ── Summary cards ── */}
@@ -286,6 +297,14 @@ export default function TeamScoreboardTab({ team }) {
           </table>
         </div>
       </div>
+
+      <ReportModal
+        isOpen={isReportModalOpen}
+        onClose={() => setIsReportModalOpen(false)}
+        title="Download Team Report"
+        subtitle={`Generate a performance PDF for ${team.name}.`}
+        onGenerate={(formValues) => reportApi.createTeamReport({ team_id: team.id, ...formValues })}
+      />
     </div>
   );
 }

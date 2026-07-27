@@ -9,6 +9,7 @@ import ForgotPasswordPage from "../pages/ForgotPasswordPage";
 import DashboardPage from "../pages/DashboardPage";
 import UsersPage from "../pages/UsersPage";
 import UserScoreboardPage from "../pages/UserScoreboardPage";
+import OrganizationScoreboardPage from "../pages/OrganizationScoreboardPage";
 import TeamsPage from "../pages/TeamsPage";
 import ProjectsPage from "../pages/ProjectsPage";
 import ProjectDetailPage from "../pages/ProjectDetailPage";
@@ -52,6 +53,7 @@ export default function AppRouter() {
             <Route path="/profile" element={<ProfilePage />} />
             <Route path="/users" element={<UsersPage />} />
             <Route path="/users/:userId/scoreboard" element={<UserScoreboardPage />} />
+            <Route path="/scoreboard" element={<OrganizationScoreboardPage />} />
             <Route path="/teams" element={<TeamsPage />} />
             <Route path="/teams/:teamId" element={<TeamDetailPage />} />
             <Route path="/projects" element={<ProjectsPage />} />

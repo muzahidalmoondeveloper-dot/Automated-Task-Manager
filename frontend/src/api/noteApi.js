@@ -5,6 +5,11 @@ export const noteApi = {
     return apiClient.get(`/notes/${entityType}/${entityId}`);
   },
 
+  counts(entityType, entityIds) {
+    if (!entityIds || entityIds.length === 0) return Promise.resolve({});
+    return apiClient.get(`/notes/counts/${entityType}?entity_ids=${entityIds.join(",")}`);
+  },
+
   create(entityType, entityId, text) {
     return apiClient.post(`/notes/${entityType}/${entityId}`, { text });
   },

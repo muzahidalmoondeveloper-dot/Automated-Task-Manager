@@ -23,6 +23,14 @@ export const reportApi = {
     return apiClient.post("/reports", payload);
   },
 
+  createEmployeeReport(payload) {
+    return apiClient.post("/reports/employee", payload);
+  },
+
+  createTeamReport(payload) {
+    return apiClient.post("/reports/team", payload);
+  },
+
   update(id, payload) {
     return apiClient.patch(`/reports/${id}`, payload);
   },

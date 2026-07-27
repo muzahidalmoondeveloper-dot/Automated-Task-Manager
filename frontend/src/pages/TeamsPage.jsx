@@ -4,6 +4,7 @@ import toast from "react-hot-toast";
 
 import { teamApi } from "../api/teamApi";
 import { userApi } from "../api/userApi";
+import { useConfirm } from "../context/ConfirmContext";
 
 const initialForm = {
   name: "",
@@ -31,6 +32,7 @@ function ThreeDotsIcon() {
 
 export default function TeamsPage() {
   const navigate = useNavigate();
+  const confirm = useConfirm();
   const [teams, setTeams] = useState([]);
   const [users, setUsers] = useState([]);
 
@@ -239,7 +241,7 @@ export default function TeamsPage() {
   async function handleDelete(team) {
     setOpenActionMenuId(null);
 
-    const confirmed = window.confirm(`Delete ${team.name}?`);
+    const confirmed = await confirm({ message: `Delete ${team.name}?`, tone: "danger", confirmLabel: "Delete" });
 
     if (!confirmed) return;
 

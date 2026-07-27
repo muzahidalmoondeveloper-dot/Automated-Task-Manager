@@ -6,6 +6,7 @@ import { userApi } from "../api/userApi";
 import { teamApi } from "../api/teamApi";
 import { invitationApi } from "../api/invitationApi";
 import { useAuth } from "../context/AuthContext";
+import { useConfirm } from "../context/ConfirmContext";
 
 const ROLE_OPTIONS = [
   { value: "owner", label: "Owner" },
@@ -39,22 +40,6 @@ function getUserInitials(targetUser) {
     .toUpperCase();
 }
 
-function EyeIcon({ hidden }) {
-  if (hidden) {
-    return (
-      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
-        <path strokeLinecap="round" strokeLinejoin="round" d="M3 3l18 18M10.58 10.58A2 2 0 0012 14a2 2 0 001.42-.58M9.88 5.09A10.45 10.45 0 0112 4.88c5.25 0 8.5 4.62 9.5 7.12a12.17 12.17 0 01-2.3 3.48M6.53 6.53A12.32 12.32 0 002.5 12c1 2.5 4.25 7.12 9.5 7.12a10.7 10.7 0 005.47-1.55" />
-      </svg>
-    );
-  }
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
-      <path strokeLinecap="round" strokeLinejoin="round" d="M2.5 12S5.75 4.88 12 4.88 21.5 12 21.5 12 18.25 19.12 12 19.12 2.5 12 2.5 12z" />
-      <path strokeLinecap="round" strokeLinejoin="round" d="M12 14.75A2.75 2.75 0 1012 9.25a2.75 2.75 0 000 5.5z" />
-    </svg>
-  );
-}
-
 function ThreeDotsIcon() {
   return (
     <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
@@ -65,6 +50,7 @@ function ThreeDotsIcon() {
 
 export default function UsersPage() {
   const { user } = useAuth();
+  const confirm = useConfirm();
   const navigate = useNavigate();
 
   // Users & teams
@@ -87,10 +73,9 @@ export default function UsersPage() {
   // Edit modal
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingUserId, setEditingUserId] = useState(null);
-  const [editForm, setEditForm] = useState({ full_name: "", email: "", password: "", role: "team_member" });
+  const [editForm, setEditForm] = useState({ full_name: "", email: "", role: "team_member" });
   const [editError, setEditError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
 
   // Invite modal
   const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
@@ -194,20 +179,17 @@ export default function UsersPage() {
     setEditForm({
       full_name: targetUser.full_name || "",
       email: targetUser.email || "",
-      password: "",
       role: targetUser.role || "team_member",
     });
     setEditError("");
-    setShowPassword(false);
     setIsEditModalOpen(true);
   }
 
   function closeEditModal() {
     setIsEditModalOpen(false);
     setEditingUserId(null);
-    setEditForm({ full_name: "", email: "", password: "", role: "team_member" });
+    setEditForm({ full_name: "", email: "", role: "team_member" });
     setEditError("");
-    setShowPassword(false);
   }
 
   async function handleEditSubmit(event) {
@@ -220,9 +202,6 @@ export default function UsersPage() {
         email: editForm.email,
         role: editForm.role,
       };
-      if (editForm.password.trim()) {
-        payload.password = editForm.password;
-      }
       const updatedUser = await userApi.update(editingUserId, payload);
       setUsers((current) =>
         current.map((item) => (item.id === editingUserId ? updatedUser : item))
@@ -239,7 +218,7 @@ export default function UsersPage() {
 
   async function handleDelete(targetUser) {
     setOpenActionMenuId(null);
-    if (!window.confirm(`Delete ${targetUser.full_name}?`)) return;
+    if (!(await confirm({ message: `Delete ${targetUser.full_name}?`, tone: "danger", confirmLabel: "Delete" }))) return;
     try {
       await userApi.delete(targetUser.id);
       setUsers((current) => current.filter((item) => item.id !== targetUser.id));
@@ -285,7 +264,7 @@ export default function UsersPage() {
   }
 
   async function handleRevoke(invitation) {
-    if (!window.confirm(`Revoke invitation for ${invitation.email}?`)) return;
+    if (!(await confirm({ message: `Revoke invitation for ${invitation.email}?`, tone: "danger", confirmLabel: "Revoke" }))) return;
     try {
       await invitationApi.revoke(invitation.id);
       setInvitations((current) => current.filter((i) => i.id !== invitation.id));
@@ -642,7 +621,7 @@ export default function UsersPage() {
             <div className="mb-6 flex items-center justify-between">
               <div>
                 <h2 className="text-xl font-semibold text-slate-900">Edit User</h2>
-                <p className="mt-1 text-sm text-slate-500">Leave password empty to keep the current one.</p>
+                <p className="mt-1 text-sm text-slate-500">Update this user's profile details.</p>
               </div>
               <button
                 type="button"
@@ -678,25 +657,6 @@ export default function UsersPage() {
                   required
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                 />
-              </div>
-              <div>
-                <label className="mb-1 block text-sm font-medium text-slate-700">Password</label>
-                <div className="relative">
-                  <input
-                    type={showPassword ? "text" : "password"}
-                    value={editForm.password}
-                    onChange={(e) => setEditForm((current) => ({ ...current, password: e.target.value }))}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 pr-11 text-sm"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword((v) => !v)}
-                    className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-slate-500 hover:text-slate-900"
-                  >
-                    <EyeIcon hidden={showPassword} />
-                  </button>
-                </div>
-                <p className="mt-1 text-xs text-slate-400">Leave empty to keep the current password.</p>
               </div>
               <div>
                 <label className="mb-1 block text-sm font-medium text-slate-700">Role</label>

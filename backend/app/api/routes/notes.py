@@ -50,6 +50,17 @@ async def _require_entity(tenant: TenantContext, entity_type: str, entity_id: in
         raise AppException(_ENTITY_NOT_FOUND)
 
 
+@router.get("/counts/{entity_type}", response_model=dict[int, int])
+async def get_note_counts(entity_type: str, entity_ids: str, tenant: TenantContext = Depends(get_tenant_context)):
+    """Bulk note counts for a list of entities, e.g. `?entity_ids=1,2,3` — used to
+    render a notes badge in list views without an N+1 fetch per row."""
+    if entity_type not in ENTITY_MODELS:
+        raise AppException(_INVALID_ENTITY_TYPE)
+    ids = [int(x) for x in entity_ids.split(",") if x.strip().isdigit()]
+    repo = NoteRepository(tenant.db, tenant.organization_id)
+    return await repo.count_for_entities(entity_type, ids)
+
+
 @router.get("/{entity_type}/{entity_id}", response_model=list[NoteOut])
 async def list_notes(entity_type: str, entity_id: int, tenant: TenantContext = Depends(get_tenant_context)):
     await _require_entity(tenant, entity_type, entity_id)

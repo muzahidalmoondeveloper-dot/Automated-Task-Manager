@@ -4,6 +4,7 @@ import { useSearchParams } from "react-router-dom";
 import toast from "react-hot-toast";
 
 import { useAuth } from "../context/AuthContext";
+import { useConfirm } from "../context/ConfirmContext";
 import RichEditor from "../components/RichEditor";
 import DatePicker from "../components/DatePicker";
 import { organizationApi } from "../api/organizationApi";
@@ -11,6 +12,7 @@ import { userApi } from "../api/userApi";
 import { rockApi } from "../api/rockApi";
 import { projectApi } from "../api/projectApi";
 import { RockIconDisplay } from "../utils/rockIcons.jsx";
+import IconPickerButton from "../components/IconPicker.jsx";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -31,14 +33,19 @@ const VALUE_COLORS = [
   { id: "indigo", bg: "bg-indigo-100", text: "text-indigo-700", border: "border-indigo-200" },
 ];
 
-const COMMON_ICONS = ["⭐","💡","🎯","🤝","🚀","💎","🌟","🔑","❤️","🏆","🌱","⚡","🛡️","🧠","🌍","🔥"];
-
 const OBJECTIVE_STATUSES = [
   { value: "active",    label: "Active",    classes: "bg-blue-100 text-blue-700"   },
   { value: "completed", label: "Completed", classes: "bg-green-100 text-green-700" },
   { value: "paused",    label: "Paused",    classes: "bg-amber-100 text-amber-700" },
   { value: "cancelled", label: "Cancelled", classes: "bg-red-100 text-red-700"     },
 ];
+
+function ValueIconDisplay({ iconStr, size = 24 }) {
+  if (iconStr && iconStr.includes("|")) {
+    return <RockIconDisplay iconStr={iconStr} size={size} />;
+  }
+  return <span style={{ fontSize: size }}>{iconStr || "⭐"}</span>;
+}
 
 function getColorClasses(colorId) {
   return VALUE_COLORS.find((c) => c.id === colorId) || VALUE_COLORS[0];
@@ -77,12 +84,14 @@ function Modal({ title, onClose, children }) {
 const VALUE_DEFAULTS = { title: "", description: "", icon: "⭐", color: "slate", sort_order: 0 };
 
 function CoreValuesTab({ canManage }) {
+  const confirm = useConfirm();
   const [values, setValues] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(VALUE_DEFAULTS);
   const [saving, setSaving] = useState(false);
+  const [icon, setIcon] = useState(null);
 
   useEffect(() => { load(); }, []);
 
@@ -101,12 +110,14 @@ function CoreValuesTab({ canManage }) {
   function openCreate() {
     setEditing(null);
     setForm(VALUE_DEFAULTS);
+    setIcon(null);
     setShowModal(true);
   }
 
   function openEdit(v) {
     setEditing(v);
     setForm({ title: v.title, description: v.description || "", icon: v.icon, color: v.color, sort_order: v.sort_order });
+    setIcon(v.icon || null);
     setShowModal(true);
   }
 
@@ -114,13 +125,14 @@ function CoreValuesTab({ canManage }) {
     e.preventDefault();
     if (!form.title.trim()) return;
     setSaving(true);
+    const payload = { ...form, icon: icon || "⭐" };
     try {
       if (editing) {
-        const updated = await organizationApi.updateValue(editing.id, form);
+        const updated = await organizationApi.updateValue(editing.id, payload);
         setValues((prev) => prev.map((v) => (v.id === editing.id ? updated : v)));
         toast.success("Core value updated.");
       } else {
-        const created = await organizationApi.createValue(form);
+        const created = await organizationApi.createValue(payload);
         setValues((prev) => [...prev, created]);
         toast.success("Core value added.");
       }
@@ -133,7 +145,7 @@ function CoreValuesTab({ canManage }) {
   }
 
   async function handleDelete(v) {
-    if (!confirm(`Delete "${v.title}"?`)) return;
+    if (!(await confirm({ message: `Delete "${v.title}"?`, tone: "danger", confirmLabel: "Delete" }))) return;
     try {
       await organizationApi.deleteValue(v.id);
       setValues((prev) => prev.filter((x) => x.id !== v.id));
@@ -188,7 +200,7 @@ function CoreValuesTab({ canManage }) {
                 className={`group relative rounded-2xl border ${c.border} bg-white p-6 shadow-sm transition hover:shadow-md`}
               >
                 <div className={`mb-4 inline-flex h-12 w-12 items-center justify-center rounded-xl text-2xl ${c.bg}`}>
-                  {v.icon}
+                  <ValueIconDisplay iconStr={v.icon} size={24} />
                 </div>
                 <h3 className="text-base font-bold text-slate-900">{v.title}</h3>
                 {v.description && (
@@ -247,20 +259,13 @@ function CoreValuesTab({ canManage }) {
             </div>
             <div>
               <label className="mb-1.5 block text-xs font-semibold text-slate-600">Icon</label>
-              <div className="flex flex-wrap gap-2">
-                {COMMON_ICONS.map((icon) => (
-                  <button
-                    key={icon}
-                    type="button"
-                    onClick={() => setForm({ ...form, icon })}
-                    className={`flex h-9 w-9 items-center justify-center rounded-lg text-lg transition ${
-                      form.icon === icon ? "bg-slate-900 text-white" : "bg-slate-100 hover:bg-slate-200"
-                    }`}
-                  >
-                    {icon}
-                  </button>
-                ))}
-              </div>
+              <IconPickerButton
+                value={icon}
+                onChange={setIcon}
+                resetKey={editing?.id ?? "create"}
+                size={20}
+                renderPreview={(v) => <ValueIconDisplay iconStr={v} size={20} />}
+              />
             </div>
             <div>
               <label className="mb-1.5 block text-xs font-semibold text-slate-600">Color</label>
@@ -804,6 +809,7 @@ function OrgChartNode({ role, allRoles, canManage, onEdit, onDelete, onAddChild,
 
 function OrgChartTab({ canManage }) {
   const { user } = useAuth();
+  const confirm = useConfirm();
   const [roles, setRoles] = useState([]);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -899,7 +905,7 @@ function OrgChartTab({ canManage }) {
 
   async function handleDelete(roleId) {
     const role = roles.find((r) => r.id === roleId);
-    if (!confirm(`Delete "${role?.name}"? Child roles will become top-level.`)) return;
+    if (!(await confirm({ message: `Delete "${role?.name}"? Child roles will become top-level.`, tone: "danger", confirmLabel: "Delete" }))) return;
     try {
       await organizationApi.deleteRole(roleId);
       setRoles((prev) => prev.filter((r) => r.id !== roleId));
@@ -1263,7 +1269,7 @@ function OrgChartTab({ canManage }) {
 
 // ─── Objectives ───────────────────────────────────────────────────────────────
 
-const OBJ_DEFAULTS = { title: "", description: "", status: "active", progress: 0, due_date: "", owner_id: "", project_id: "" };
+const OBJ_DEFAULTS = { title: "", description: "", icon: null, status: "active", progress: 0, due_date: "", owner_id: "", project_id: "" };
 
 function ObjectiveProgressCircle({ progress }) {
   const r = 13;
@@ -1297,9 +1303,12 @@ function ObjectiveModal({ editing, form, setForm, onSave, onClose, saving, users
       <div className="w-full max-w-3xl rounded-2xl bg-white shadow-2xl">
         {/* Title row */}
         <div className="flex items-center gap-3 border-b border-slate-100 px-6 py-4">
-          <svg className="h-6 w-6 shrink-0 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
-            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm0-2a6 6 0 100-12 6 6 0 000 12zm0-2a4 4 0 100-8 4 4 0 000 8zm0-2a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
-          </svg>
+          <IconPickerButton
+            value={form.icon}
+            onChange={(icon) => setForm({ ...form, icon })}
+            resetKey={editing?.id ?? "create"}
+            size={20}
+          />
           <input
             value={form.title}
             onChange={(e) => setForm({ ...form, title: e.target.value })}
@@ -1396,14 +1405,6 @@ function ObjectiveModal({ editing, form, setForm, onSave, onClose, saving, users
                 </div>
               )}
 
-              {editing && (
-                <div>
-                  <label className="mb-1.5 block text-xs font-semibold text-slate-500">Progress: {form.progress}%</label>
-                  <input type="range" min={0} max={100} step={5} value={form.progress}
-                    onChange={(e) => setForm({ ...form, progress: Number(e.target.value) })}
-                    className="w-full accent-slate-900" />
-                </div>
-              )}
             </div>
           </div>
 
@@ -1433,6 +1434,7 @@ const ROCK_STATUS_CFG = {
 };
 
 function ObjectivesTab({ canManage }) {
+  const confirm = useConfirm();
   const [objectives, setObjectives] = useState([]);
   const [users, setUsers] = useState([]);
   const [projects, setProjects] = useState([]);
@@ -1488,6 +1490,7 @@ function ObjectivesTab({ canManage }) {
     setForm({
       title: obj.title,
       description: obj.description || "",
+      icon: obj.icon || null,
       status: obj.status,
       progress: obj.progress,
       due_date: obj.due_date || "",
@@ -1526,7 +1529,7 @@ function ObjectivesTab({ canManage }) {
   }
 
   async function handleDelete(obj) {
-    if (!confirm(`Delete "${obj.title}"?`)) return;
+    if (!(await confirm({ message: `Delete "${obj.title}"?`, tone: "danger", confirmLabel: "Delete" }))) return;
     try {
       await organizationApi.deleteObjective(obj.id);
       setObjectives((prev) => prev.filter((o) => o.id !== obj.id));
@@ -1656,9 +1659,9 @@ function ObjectivesTab({ canManage }) {
                     </svg>
                   </button>
                   <ObjectiveProgressCircle progress={totalMilestones > 0 ? Math.round((doneMilestones / totalMilestones) * 100) : obj.progress} />
-                  <svg className="h-4 w-4 shrink-0 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
-                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm0-2a6 6 0 100-12 6 6 0 000 12zm0-2a4 4 0 100-8 4 4 0 000 8zm0-2a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
-                  </svg>
+                  <span className="shrink-0 text-slate-400">
+                    <RockIconDisplay iconStr={obj.icon} size={16} />
+                  </span>
                   <span className="flex-1 truncate text-sm font-medium text-slate-900">{obj.title}</span>
                   {obj.project && (
                     <span className="shrink-0 rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-600" title={`Project: ${obj.project.name}`}>

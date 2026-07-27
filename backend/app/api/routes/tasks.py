@@ -46,6 +46,7 @@ def serialize_task(task: Task) -> TaskDetailRead:
     return TaskDetailRead(
         id=task.id,
         name=task.name,
+        icon=getattr(task, "icon", None),
         start_date=task.start_date,
         due_date=task.due_date,
         status=task.status,
@@ -268,6 +269,19 @@ async def update_task_status(
     if not tenant.is_admin_or_owner:
         raise HTTPException(status_code=http_status.HTTP_403_FORBIDDEN, detail="You are not allowed to update tasks.")
 
+    if payload.status == "done" and task.status != "done":
+        task.completed_by_id = task.assignee_id or tenant.user.id
+        task.completed_at = datetime.now(timezone.utc)
+        task.reviewed_by_id = tenant.user.id
+        task.reviewed_at = datetime.now(timezone.utc)
+        task.review_note = "Marked done directly."
+    elif payload.status != "done" and task.status == "done":
+        task.completed_by_id = None
+        task.completed_at = None
+        task.reviewed_by_id = None
+        task.reviewed_at = None
+        task.review_note = None
+
     updated = await repo.update(task, TaskUpdate(status=payload.status))
     return serialize_task(updated)
 
@@ -348,6 +362,20 @@ async def update_task(
 
     old_assignee_id = task.assignee_id
     old_due_date = task.due_date
+
+    if payload.status == "done" and task.status != "done":
+        task.completed_by_id = task.assignee_id or tenant.user.id
+        task.completed_at = datetime.now(timezone.utc)
+        task.reviewed_by_id = tenant.user.id
+        task.reviewed_at = datetime.now(timezone.utc)
+        task.review_note = "Marked done directly."
+    elif payload.status is not None and payload.status != "done" and task.status == "done":
+        task.completed_by_id = None
+        task.completed_at = None
+        task.reviewed_by_id = None
+        task.reviewed_at = None
+        task.review_note = None
+
     updated = await repo.update(task, payload)
 
     new_assignee_id = payload.assignee_id

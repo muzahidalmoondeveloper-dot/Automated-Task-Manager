@@ -7,6 +7,7 @@ import EntityDetailPanel from "../components/EntityDetailPanel";
 import DatePicker from "../components/DatePicker";
 import toast from "react-hot-toast";
 import { rockApi } from "../api/rockApi";
+import { noteApi } from "../api/noteApi";
 import { kpiApi } from "../api/kpiApi";
 import { taskApi } from "../api/taskApi";
 import { organizationApi } from "../api/organizationApi";
@@ -14,7 +15,9 @@ import { teamApi } from "../api/teamApi";
 import { projectApi } from "../api/projectApi";
 import { apiClient } from "../api/client";
 import { useAuth } from "../context/AuthContext";
-import { ICON_COLORS, ICON_SET, parseRockIcon, serializeRockIcon, RockIconDisplay } from "../utils/rockIcons.jsx";
+import { useConfirm } from "../context/ConfirmContext";
+import { RockIconDisplay } from "../utils/rockIcons.jsx";
+import IconPickerButton from "../components/IconPicker.jsx";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -215,12 +218,7 @@ function LinkTypeIcon({ type, className = "h-3.5 w-3.5" }) {
 
 function RockModal({ team, users, objectives, teams, projects, currentUser, editing, onClose, onSave, saving, defaultStatus = "backlog" }) {
   const [title, setTitle] = useState(editing?.title || "");
-  const parsedIcon = parseRockIcon(editing?.icon || "");
-  const [iconName, setIconName] = useState(parsedIcon.name);
-  const [iconColor, setIconColor] = useState(parsedIcon.color);
-  const [iconPickerOpen, setIconPickerOpen] = useState(false);
-  const [iconSearch, setIconSearch] = useState("");
-  const [hoveredIconLabel, setHoveredIconLabel] = useState(null);
+  const [icon, setIcon] = useState(editing?.icon || null);
   const [desc, setDesc] = useState(editing?.description || "");
   const [status, setStatus] = useState(editing?.status || defaultStatus);
   const [ownerId, setOwnerId] = useState(editing ? String(editing.owner?.id || "") : String(currentUser?.id || ""));
@@ -310,7 +308,7 @@ function RockModal({ team, users, objectives, teams, projects, currentUser, edit
     if (!title.trim()) return;
     onSave({
       title: title.trim(),
-      icon: serializeRockIcon(iconName, iconColor),
+      icon,
       description: desc || null,
       status,
       owner_id: ownerId ? Number(ownerId) : null,
@@ -355,66 +353,7 @@ function RockModal({ team, users, objectives, teams, projects, currentUser, edit
             <div className="flex flex-col gap-0 p-6 space-y-5">
               {/* Title */}
               <div className="flex items-center gap-3">
-                <div className="relative shrink-0">
-                  <button type="button"
-                    onClick={() => { setIconPickerOpen((v) => !v); setIconSearch(""); setHoveredIconLabel(null); }}
-                    className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 hover:bg-slate-200 transition-colors">
-                    <RockIconDisplay iconStr={serializeRockIcon(iconName, iconColor)} size={20} />
-                  </button>
-                  {iconPickerOpen && (
-                    <>
-                      <div className="fixed inset-0 z-30" onClick={() => setIconPickerOpen(false)} />
-                      <div className="absolute left-0 top-11 z-40 w-80 rounded-xl border border-slate-200 bg-white p-3 shadow-2xl">
-                        <div className="mb-2.5 flex items-center justify-between">
-                          <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Choose Icon</span>
-                          {iconName && (
-                            <button type="button" onClick={() => { setIconName(null); setIconPickerOpen(false); }}
-                              className="text-xs text-slate-400 hover:text-slate-700">Clear</button>
-                          )}
-                        </div>
-                        {/* Color swatches */}
-                        <div className="mb-2.5 flex flex-wrap gap-1.5">
-                          {ICON_COLORS.map((c) => (
-                            <button key={c.hex} type="button"
-                              onClick={() => setIconColor(c.hex)}
-                              className="flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold text-white transition-opacity hover:opacity-100"
-                              style={{ backgroundColor: c.hex, opacity: iconColor === c.hex ? 1 : 0.55 }}>
-                              {c.label}
-                              {iconColor === c.hex && <span>✓</span>}
-                            </button>
-                          ))}
-                        </div>
-                        {/* Search */}
-                        <div className="relative mb-2.5">
-                          <svg className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
-                            <path fillRule="evenodd" d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z" clipRule="evenodd" />
-                          </svg>
-                          <input value={iconSearch} onChange={(e) => setIconSearch(e.target.value)}
-                            placeholder="Search icons…"
-                            className="w-full rounded-lg border border-slate-200 py-1.5 pl-8 pr-3 text-xs outline-none focus:border-slate-400" />
-                        </div>
-                        {/* Icon grid */}
-                        <div className="grid grid-cols-7 gap-1 max-h-48 overflow-y-auto">
-                          {ICON_SET
-                            .filter((ic) => !iconSearch || ic.label.toLowerCase().includes(iconSearch.toLowerCase()))
-                            .map((ic) => (
-                              <button key={ic.name} type="button"
-                                onClick={() => { setIconName(ic.name); setIconPickerOpen(false); }}
-                                onMouseEnter={() => setHoveredIconLabel(ic.label)}
-                                onMouseLeave={() => setHoveredIconLabel(null)}
-                                className={`flex h-9 w-9 items-center justify-center rounded-lg transition-colors hover:bg-slate-100 ${iconName === ic.name ? "bg-slate-200 ring-1 ring-slate-300" : ""}`}>
-                                <ic.Icon size={18} color={iconColor} />
-                              </button>
-                            ))}
-                        </div>
-                        {/* Hover preview label */}
-                        <p className="mt-1.5 h-4 text-center text-[10px] text-slate-400">
-                          {hoveredIconLabel || ""}
-                        </p>
-                      </div>
-                    </>
-                  )}
-                </div>
+                <IconPickerButton value={icon} onChange={setIcon} resetKey={editing?.id ?? "create"} size={20} />
                 <input value={title} onChange={(e) => setTitle(e.target.value)}
                   placeholder="Rock title" required autoFocus
                   className="flex-1 rounded-xl border border-slate-200 px-4 py-2.5 text-base font-medium text-slate-900 placeholder:text-slate-300 outline-none focus:border-slate-400" />
@@ -690,7 +629,7 @@ function RockModal({ team, users, objectives, teams, projects, currentUser, edit
 
 // ─── Rock row ─────────────────────────────────────────────────────────────────
 
-function RockRow({ rock, users, canManage, onEdit, onDelete, onArchive, onStatusChange, onMilestoneToggle, onRockUpdated }) {
+function RockRow({ rock, users, canManage, onEdit, onDelete, onArchive, onStatusChange, onMilestoneToggle, onRockUpdated, noteCount = 0, onNotesPanelClose }) {
   const [expanded, setExpanded] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuPos, setMenuPos] = useState(null);
@@ -766,14 +705,20 @@ function RockRow({ rock, users, canManage, onEdit, onDelete, onArchive, onStatus
         </td>
         {/* Notes / actions */}
         <td className="py-3 pr-4 w-20">
-          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-            <button type="button" onClick={() => setDetailOpen(true)} title="Notes & details" className="rounded p-1 text-slate-400 hover:bg-slate-100">
+          <div className="flex items-center gap-1">
+            <button type="button" onClick={() => setDetailOpen(true)} title="Notes & details"
+              className="relative rounded p-1 text-slate-400 hover:bg-slate-100">
               <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
                 <path fillRule="evenodd" d="M10 2c-2.236 0-4.43.18-6.57.524C1.993 2.755 1 4.014 1 5.426v5.148c0 1.413.993 2.67 2.43 2.902 1.168.188 2.352.327 3.55.414.28.02.521.18.642.413l1.713 3.293a.75.75 0 001.33 0l1.713-3.293a.647.647 0 01.642-.413 41.102 41.102 0 003.55-.414c1.437-.231 2.43-1.49 2.43-2.902V5.426c0-1.413-.993-2.67-2.43-2.902A41.289 41.289 0 0010 2z" clipRule="evenodd" />
               </svg>
+              {noteCount > 0 && (
+                <span className="absolute -top-1 -right-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-bold leading-none text-white">
+                  {noteCount > 99 ? "99+" : noteCount}
+                </span>
+              )}
             </button>
             {canManage && (
-              <div>
+              <div className="opacity-0 group-hover:opacity-100 transition-opacity">
                 <button ref={menuBtnRef} type="button"
                   onClick={openMenu}
                   className="rounded p-1 text-slate-400 hover:bg-slate-100">
@@ -864,7 +809,7 @@ function RockRow({ rock, users, canManage, onEdit, onDelete, onArchive, onStatus
           milestones={rock.milestones}
           milestoneUsers={users}
           onMilestonesChange={(newMilestones) => onRockUpdated?.({ ...rock, milestones: newMilestones })}
-          onClose={() => setDetailOpen(false)}
+          onClose={() => { setDetailOpen(false); onNotesPanelClose?.(); }}
         />
       )}
     </>
@@ -882,6 +827,7 @@ const TABS = [
 
 export default function RocksTab({ team, canManage }) {
   const { user } = useAuth();
+  const confirm = useConfirm();
   const [rocks, setRocks] = useState([]);
   const [objectives, setObjectives] = useState([]);
   const [teams, setTeams] = useState([]);
@@ -892,6 +838,7 @@ export default function RocksTab({ team, canManage }) {
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [noteCounts, setNoteCounts] = useState({});
 
   useEffect(() => {
     if (!team?.id) return;
@@ -903,6 +850,9 @@ export default function RocksTab({ team, canManage }) {
       setLoading(true);
       const r = await rockApi.list(team.id);
       setRocks(Array.isArray(r) ? r : []);
+      noteApi.counts("rock", (r || []).map((rock) => rock.id))
+        .then(setNoteCounts)
+        .catch(() => {});
       try {
         const objs = await apiClient.get("/organization/objectives");
         if (Array.isArray(objs)) setObjectives(objs);
@@ -952,7 +902,7 @@ export default function RocksTab({ team, canManage }) {
   }
 
   async function handleDelete(rock) {
-    if (!confirm(`Delete "${rock.title}"?`)) return;
+    if (!(await confirm({ message: `Delete "${rock.title}"?`, tone: "danger", confirmLabel: "Delete" }))) return;
     try {
       await rockApi.delete(team.id, rock.id);
       setRocks((prev) => prev.filter((r) => r.id !== rock.id));
@@ -1094,7 +1044,9 @@ export default function RocksTab({ team, canManage }) {
                   onArchive={handleArchive}
                   onStatusChange={handleStatusChange}
                   onMilestoneToggle={handleMilestoneToggle}
-                  onRockUpdated={(updated) => setRocks((prev) => prev.map((r) => (r.id === updated.id ? updated : r)))} />
+                  onRockUpdated={(updated) => setRocks((prev) => prev.map((r) => (r.id === updated.id ? updated : r)))}
+                  noteCount={noteCounts[rock.id] || 0}
+                  onNotesPanelClose={() => noteApi.counts("rock", rocks.map((r) => r.id)).then(setNoteCounts).catch(() => {})} />
               ))}
             </tbody>
           </table>

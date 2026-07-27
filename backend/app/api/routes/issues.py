@@ -71,6 +71,9 @@ async def update_issue(
     for field, value in payload.model_dump(exclude_none=True, exclude={"links"}).items():
         setattr(issue, field, value)
     if payload.links is not None:
+        for l in list(issue.links):
+            await db.delete(l)
+        await db.flush()
         _apply_links(issue, payload.links)
     await db.commit()
     await db.refresh(issue)
